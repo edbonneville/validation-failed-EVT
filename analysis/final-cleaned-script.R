@@ -161,7 +161,6 @@ formula = lasso_form
 lambda_choice = "min"
 
 validate_lasso_stackedImps <- function(imputations, # as returned by "long"
-                                       # add id and imp indicator
                                        formula,
                                        wts,
                                        n_folds = 10,
@@ -196,12 +195,7 @@ validate_lasso_stackedImps <- function(imputations, # as returned by "long"
     family = "binomial"
   )
   
-  # Calibration
-  lp <- predict(mod_apparent, newx = X_orig, type = "link")
   
-  #val.prob.ci.2(logit = lp, y = as.numeric(Y) - 1, weights = imputations[["wts"]])
-  glm(Y ~ offset(lp), family = "quasibinomial")#, weights = imputations[["wts"]])
-  glm(Y ~ lp, family = "quasibinomial")#, #weights = imputations[["wts"]])
   # Run one bootstrap
   
 } 
@@ -239,9 +233,6 @@ imp_lambdas <- purrr::map_dfr(.x = 1:m, .f = ~ {
   cv_oneimp <- cv.glmnet(x = X, y = imp[["failure_femoral_approach"]], family = "binomial")
   cbind.data.frame("min_lambda" = cv_oneimp$lambda.min, "1se_lambda" = cv_oneimp$lambda.1se)
 })
-
-colMeans(imp_lambdas)
-
 
 
 # Internal validation bootstrap -------------------------------------------
