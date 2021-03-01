@@ -196,55 +196,145 @@ modo <- lrm(form, data = imps_stack_develop,
 
 # Internal validation (stacked) -------------------------------------------
 
+plan(future::multisession, workers = 3)
+
+# Maybe return CIs after?
+test <- validate_lasso_stackedImps(
+  imputations = imps_stack_develop,
+  formula = form,
+  wts = "wts", 
+  n_folds = 10,
+  lambda_choice = "min", 
+  B = 15 # 200 later
+)
+
+test
+
+plan(future::sequential)
 
 
+# Externally validate 
+response_var <- all.vars(stats::update(form, . ~ 1))
+X_orig <- subset(x = stats::model.matrix(form, data = imps_stack_develop), select = -`(Intercept)`)
+y_orig <- imps_stack_develop[[response_var]]
+wts_orig <- imps_stack_develop[["wts"]]
+
+# First apparent performance
+folds <- assign_crossval_folds(y = unique(imps_stack_develop[[".id"]]), n_folds = 10)
+mod_orig <- run_lasso_glmnet(
+  x = X_orig,
+  y = y_orig,
+  wts = wts_orig,
+  foldid = folds[match(imps_stack_develop[[".id"]], folds[["y"]]), "fold"],
+  lambda_choice = "min"
+)
+
+apparent_perform <- assess_performance(
+  glmnet_model = mod_orig,
+  new_x = X_orig, 
+  new_y = y_orig,
+  wts = wts_orig
+)
+
+# Internal calibration plot
+val.prob.ci.2(
+  y = as.numeric(y_orig) - 1,
+  logit = predict(mod_orig, X_orig),
+  smooth = "rcs", 
+  dostats = FALSE
+)
+
+val.prob.ci.2(
+  y = as.numeric(y_orig) - 1,
+  logit = predict(mod_orig, X_orig), 
+  smooth = "rcs",
+  cuts = quantile(predict(mod_orig, X_orig, type = "response"), 
+                  probs = seq(0, 1, length.out = 10)),
+  dostats = FALSE
+)
 
 
-# Internal validation (imp datasets seperately) ---------------------------
+# External valid ----------------------------------------------------------
+
+# Calibration external
+X_valid <- subset(x = stats::model.matrix(form, data = imps_stack_valid), select = -`(Intercept)`)
+y_valid <- imps_stack_valid[[response_var]]
+wts_valid <- imps_stack_valid[["wts"]]
 
 
-# Single impdat
-single_imp <- subset(imps_stack_develop, subset = (.imp == 1))
-single_imp
+valid_perform <- assess_performance(
+  glmnet_model = mod_orig,
+  new_x = X_valid, 
+  new_y = y_valid,
+  wts = wts_valid
+)
 
-# Pretend just doing simple lrm
-mod_lrm <- rms::lrm(form, data = single_imp, x = TRUE, y = TRUE)
-res <- validate(mod_lrm, B = 25)
-res["Dxy", ] <- (res["Dxy", ]  + 1) / 2
-res
+glm(y_valid ~ predict(mod_orig, X_valid), family = "binomial")
 
-AUC(lp, as.numeric(single_imp[[resp]]) -1)
+val.prob.ci.2(
+  y = as.numeric(y_valid) - 1,
+  logit = predict(mod_orig, X_valid), #-1.0744 + 0.5453 * predict(mod_orig, X_valid),
+  smooth = "rcs", 
+  cuts = quantile(predict(mod_orig, X_valid, type = "response"), 
+                  probs = seq(0, 1, length.out = 10)),
+  dostats = FALSE
+)
 
-lp <- predict(mod_lrm, single_imp, type = "lp")
-resp <- all.vars(update(form, . ~ 1))
-mod_recal <- rms::lrm(single_imp[[resp]] ~ lp)
+library(psfmi)
 
-plot(calibrate(mod_lrm, B = 100))
+# https://www.nature.com/articles/s41398-020-01172-y.pdf - good reporting
+imps_stack_develop %>% 
+  mutate(
+    y = as.numeric(Mc_FailedFemoralApproach) - 1,
+    preds = predict(mod_orig, X_orig, type = "response")
+  ) %>% 
+  mutate(group = ntile(x = preds, n = 10)) %>% 
+  group_by(group) %>% 
+  summarise(
+    observed = mean(y),
+    predicted = mean(preds)
+  ) %>% 
+  ggplot(aes(predicted, observed)) +
+  geom_abline(intercept = 0, slope = 1, col = "black") +
+  geom_point() +
+  geom_smooth() +
+  coord_cartesian(xlim = c(0, 1), ylim = c(0, 1))
 
-
-glm(single_imp[[resp]] ~ offset(lp), family = binomial)
-
-B <- 25
-purrr::map_dfr(.x = 1:B,.f = ~ {
+dat_loess <- imps_stack_develop %>% 
+  mutate(
+    y = as.numeric(Mc_FailedFemoralApproach) - 1,
+    preds = predict(mod_orig, X_orig, type = "response")
+  ) %>% 
+  mutate(group = ntile(x = preds, n = 20)) %>% 
+  group_by(group) %>% 
+  summarise(
+    observed = mean(y),
+    predicted = mean(preds)
+  )
   
-  inds <- sample(nrow(single_imp), replace = TRUE)
-  boot_dat <- single_imp[inds, ]
-  mod_lrm_boot <- rms::lrm(form, data = boot_dat, x = TRUE, y = TRUE)
-  lp <- predict(mod_lrm_boot, single_imp, type = "lp")
-  #mod_recal_boot <- rms::lrm(single_imp[[resp]] ~ lp)
-  #coef(mod_recal_boot)
-  c(0, 1) - calibration_intercept_slope(single_imp[[resp]], lp)
-}) %>% 
-  colMeans()
+mod_loess <- loess(observed ~ predicted, data = dat_loess, 
+                   control = loess.control(surface = "direct"))
+
+predict(mod_loess, newdata =  data.frame("predicted" = c(dat_loess$predicted, seq(0.3, 1, by = 0.01))))
+
+cbind.data.frame(
+  "predicted" = c(dat_loess$predicted, seq(0.3, 1, by = 0.01)),
+  "observed" = predict(mod_loess, newdata =  data.frame("predicted" = c(dat_loess$predicted, seq(0.3, 1, by = 0.01))))
+) %>% 
+  ggplot(aes(predicted, observed)) +
+  geom_abline(intercept = 0, slope = 1, col = "black") +
+  geom_line() +
+  coord_cartesian(xlim = c(0, 1), ylim = c(0, 1))
 
 
-val.prob.ci.2(y = as.numeric(single_imp[[resp]]) - 1, logit = lp)
-rms::val.prob(y = as.numeric(single_imp[[resp]]) - 1, logit = lp)
-
-
-
-
-
+cbind.data.frame(
+  "predicted" = seq(0, 1, by = 0.1),
+  "observed" = predict(mod_loess, newdata =  data.frame("predicted" = seq(0, 1, by = 0.1)))
+) %>% 
+  ggplot(aes(predicted, observed)) +
+  geom_abline(intercept = 0, slope = 1, col = "black") +
+  geom_line() +
+  coord_cartesian(xlim = c(0, 1), ylim = c(0, 1))
 
 
 # See for reporting 
@@ -257,5 +347,12 @@ rms::val.prob(y = as.numeric(single_imp[[resp]]) - 1, logit = lp)
 
 
 
+
+# Validation of model on combined dataset ---------------------------------
+
+
+
+#Internally validate
+# Recalibrate??
 
 

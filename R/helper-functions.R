@@ -224,6 +224,7 @@ validate_lasso_stackedImps <- function(imputations, # as returned by "long"
   bootstrap_valids <- furrr::future_map_dfr(
     .x = boot_dats,
     .id = "boot_num",
+    .options = furrr_options(seed = TRUE),
     .f = ~ {
       
       # Same business
@@ -256,27 +257,33 @@ validate_lasso_stackedImps <- function(imputations, # as returned by "long"
       )
       
       # Performance
-      cbind.data.frame(
+      res_boot <- cbind.data.frame(
         "measure" = training_perform[["measure"]],
+        "apparent" = apparent_perform[["value"]],
         "training" = training_perform[["value"]],
         "test" = test_perform[["value"]],
         "optimism" = training_perform[["value"]] - test_perform[["value"]]
       )
+      
+      # Compute corrected measure
+      res_boot[["corrected"]] = res_boot[["apparent"]] - res_boot[["optimism"]]
+      return(res_boot)
     }
   )  
   
   # Summarise
-  results <- bootstrap_valids %>% 
+  results <- bootstrap_valids %>%
     group_by(measure) %>% 
-    summarise(
+    dplyr::summarise(
+      apparent = mean(apparent),
       training = mean(training),
       test = mean(test),
-      optimism = mean(optimism)
+      optimism = mean(optimism),
+      lower_corrected = quantile(x = corrected, probs = 0.025),
+      upper_corrected = quantile(x = corrected, probs = 0.975),
+      corrected = mean(corrected)
     ) %>% 
-    left_join(apparent_perform, by = "measure") %>% 
-    rename("apparent" = value) %>% 
-    mutate("corrected" = apparent - optimism) %>%
-    mutate(across(is.numeric, ~ round(.x, digits = 3)))
+    mutate(across(where(is.numeric), ~ round(.x, digits = 3)))
   
   return(results)
 }
