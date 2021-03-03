@@ -95,9 +95,10 @@ imps_univariate_ORs <- function(outcome,
 calibration_intercept_slope <- function(y, lp, wts = NULL) {
   
   # Check if any fractional weights
-  family <- ifelse(any((wts %% 1) != 0), "quasibinomial", "binomial")
+  #family <- ifelse(any((wts %% 1) != 0), "quasibinomial", "binomial")
+  family <- "binomial" # ignore warning
   
-  # Fit models to linear predictors
+  # Fit models to linear predictors - CHANGE TO RMS! or suppress warnings
   mod_lp <- stats::glm(y ~ lp, weights = wts, family = family)
   mod_offset <- stats::glm(y ~ offset(lp), weights = wts, family = family)
   result <- c("intercept" = coef(mod_offset)[["(Intercept)"]], "slope" = coef(mod_lp)[["lp"]])

@@ -12,32 +12,6 @@ set.seed(1984)
 # Read-in
 dat_combined <- readRDS("data/combined-data_processed.rds")
 
-# Make df here with var labels..
-
-# Exclude vars not in table one
-vars_exclude_table <- c("sidescored", "AngleCcaIca", "ICAEAtherosclerosis", "StudySubjectID")
-
-# Gives you everything for tables 1 and 2 (warnings due to variables not in validation, ignore!)
-table_one <- dat_combined[, !(colnames(dat_combined) %in% vars_exclude_table)] %>% 
-  
-  # Here we dichotomise purely for the table, does not affect original data
-  mutate(
-    ICA_nr_90orLarger_geq1 = factor(ifelse(ICA_nr_90orLarger >= 1, 1, 0)),
-    ICA_nr_90orLarger_geq2 = factor(ifelse(ICA_nr_90orLarger >= 2, 1, 0)),
-    ICAE_NASCET_99 = factor(ifelse(ICAE_NASCET_Degree < 99, 0,1)),
-    InnCca_90orLarger_geq1 = factor(ifelse(InnCca_nr_90orLarger >= 1, 1, 0)),
-    InnCca_90orLarger_geq2 = factor(ifelse(InnCca_nr_90orLarger >= 2, 1, 0)),
-    ICAI_stenosis50 = factor(ifelse(ICAIAtherosclerosis == "Yes, >=50% stenosis", 1, 0)),
-    AngleAaInn_OR_AaCca_dich45 = factor(ifelse(AngleAaInn_OR_AaCca > 45, 0, 1))
-  ) %>% 
-  CreateTableOne(data = ., strata = "dataset")
-
-# Summaries of all continuous variables
-print(table_one$ContTable, nonnormal = TRUE)
-
-# Summaries of all categorical variables
-print(table_one$CatTable)
-
 
 # Imputation prep ---------------------------------------------------------
 
@@ -235,6 +209,30 @@ apparent_perform <- assess_performance(
   new_y = y_orig,
   wts = wts_orig
 )
+
+apparent_perform
+
+# Check ci's
+imp1 <- subset(x = imps_stack_develop, subset = (.imp == 1))
+lp1 <- predict(mod_orig, newx = model.matrix(form, data = imp1)[, -1])
+summary(glm(imp1$Mc_FailedFemoralApproach ~ lp1, family = "binomial"))
+
+# Ignore warning
+lp_stack <- predict(mod_orig, newx = X_orig)
+summary(glm(imps_stack_develop$Mc_FailedFemoralApproach ~ lp_stack, 
+            family = "binomial", weights = imps_stack_develop$wts))
+
+split(x = imps_stack_develop, f = imps_stack_develop$.imp) %>% 
+  purrr::map_dfr(
+    .f = ~ {
+      new_X <- model.matrix(form, data = .x)[, -1]
+      new_y <- .x[["Mc_FailedFemoralApproach"]]
+      lp <- predict(mod_orig, newx = new_X)
+      c(calibration_intercept_slope(new_y, lp), AUC(lp, as.numeric(new_y) - 1))
+    } 
+  ) %>% 
+  rowMeans()
+
 
 # Internal calibration plot
 val.prob.ci.2(

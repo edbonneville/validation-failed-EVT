@@ -11,8 +11,8 @@ pacman::p_load(
   "foreign", # Reading-in data, editing labels
   "mice", # Imputation
   "glmnet", # LASSO
-  "future",
-  "furrr",
+  "future", # For running bootstraps in parallel
+  "furrr", # For running bootstraps in parallel
   "tidyverse", # Data manipulation/plotting
   "tableone" # For getting data of table one
 )
@@ -59,7 +59,7 @@ develop <- develop_raw %>%
 valid <- valid_raw %>% 
   
   # Remove vars in 'dropped' (bottom of excel)
-  select(-c("InnCca_90orLarger", "ICAE_NASCET_99", "pretici_c", "occlsegment_c_short")) %>%  
+  select(-InnCca_90orLarger, -ICAE_NASCET_99, -pretici_c, -occlsegment_c_short) %>%  
   
   # Remove Incaa with 4 categories (only five pats have value of 4), keep 3 cat version
   select(-InnCca_nr_90orLarger) %>% 
@@ -87,7 +87,7 @@ setdiff(names(develop), names(valid))
 
 
 # Combine datasets
-combined <- bind_rows(develop, valid, .id = "dataset") %>% 
+dat_combined <- bind_rows(develop, valid, .id = "dataset") %>% 
   mutate(
     dataset = factor(x = dataset, levels = c("1", "2"), labels = c("develop", "valid")),
     M_premrs = ifelse(M_premrs >= 1, 1, 0), # for table one
@@ -113,13 +113,40 @@ combined <- bind_rows(develop, valid, .id = "dataset") %>%
   )
 
 # Keep variable labels
-var_labs <- attr(develop, "variable.labels")[names(combined)]
-attr(combined, "variable.labels") <- var_labs
+var_labs <- attr(develop, "variable.labels")[names(dat_combined)]
+attr(dat_combined, "variable.labels") <- var_labs
 
 # Save it
-saveRDS(combined, file = "data/combined-data_processed.rds")
+saveRDS(dat_combined, file = "data/combined-data_processed.rds")
 
 # To-do POST imputation:
 #- age to decades
 
 
+# Descriptives ------------------------------------------------------------
+
+
+# Exclude vars not in table one
+vars_exclude_table <- c("sidescored", "AngleCcaIca", "ICAEAtherosclerosis", "StudySubjectID")
+
+# Gives you everything for tables 1 and 2 (warnings due to variables not in validation, ignore!)
+table_one <- dat_combined %>%  
+  select(-all_of(vars_exclude_table)) %>% 
+  
+  # Here we dichotomise purely for the table, does not affect original data
+  mutate(
+    ICA_nr_90orLarger_geq1 = factor(ifelse(ICA_nr_90orLarger >= 1, 1, 0)),
+    ICA_nr_90orLarger_geq2 = factor(ifelse(ICA_nr_90orLarger >= 2, 1, 0)),
+    ICAE_NASCET_99 = factor(ifelse(ICAE_NASCET_Degree < 99, 0,1)),
+    InnCca_90orLarger_geq1 = factor(ifelse(InnCca_nr_90orLarger >= 1, 1, 0)),
+    InnCca_90orLarger_geq2 = factor(ifelse(InnCca_nr_90orLarger >= 2, 1, 0)),
+    ICAI_stenosis50 = factor(ifelse(ICAIAtherosclerosis == "Yes, >=50% stenosis", 1, 0)),
+    AngleAaInn_OR_AaCca_dich45 = factor(ifelse(AngleAaInn_OR_AaCca > 45, 0, 1))
+  ) %>% 
+  CreateTableOne(data = ., strata = "dataset")
+
+# Summaries of all continuous variables
+print(table_one$ContTable, nonnormal = TRUE)
+
+# Summaries of all categorical variables
+print(table_one$CatTable)
