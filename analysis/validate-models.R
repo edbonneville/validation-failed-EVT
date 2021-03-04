@@ -78,7 +78,6 @@ imps_all <- imps_all %>%
     )
   )
 
-
 # Univariate analyses -----------------------------------------------------
 
 
@@ -154,17 +153,20 @@ imps_develop <- imps_all %>%
 #future::plan(future::sequential)
 future::plan(future::multisession, workers = 3)
 
-# Fit and internal validation
+# Fit and internal validation - takes 10 minutes approx with 3 cores
 fit_validation_develop <- validate_lasso_stackedImps(
   imputations = imps_develop,
-  formula = form, wts = "wts", 
+  formula = form, 
+  wts = "wts", 
   n_folds = 10,
   lambda_choice = "min",
-  B = 5
+  B = 200 
 )
 
 # Save this
-saveRDS(fit_validation_develop, file = "data/validation_develop.rds")
+#saveRDS(fit_validation_develop, file = "data/validation_develop.rds")
+
+fit_validation_develop <- readRDS("data/validation_develop.rds")
 
 # Internal validation summary
 fit_validation_develop$validation_summary
@@ -180,7 +182,10 @@ X_dev <- subset(x = stats::model.matrix(form, data = imps_develop), select = -`(
 y_dev <- imps_develop[[response_var]]
 
 
-val.prob.ci.2(
+dd <- datadist(imps_develop %>% select(all_of(c(response_var, candidate_predictors)))); 
+options(datadist = "dd")
+
+CalibrationCurves::val.prob.ci.2(
   y = as.numeric(y_dev) - 1,
   logit = predict(mod_develop, newx = X_dev), 
   smooth = "rcs",
@@ -244,8 +249,11 @@ cbind(coef(mod_lp), confint(mod_lp))[-1, ]
 cbind(coef(mod_offset), confint(mod_offset))
 
 
+dd <- datadist(imps_valid %>% select(all_of(c(response_var, candidate_predictors)))); 
+options(datadist = "dd")
+
 # RCS val.prob
-val.prob.ci.2(
+CalibrationCurves::val.prob.ci.2(
   y = as.numeric(y_valid) - 1,
   logit = lp_valid, 
   smooth = "rcs",
@@ -266,17 +274,19 @@ val.prob.ci.2(
 imps_combined <- imps_all %>% 
   filter(imps_label == "imps_combined")
 
+# Takes 20-35 mins on 3 cores
 fit_validation_combined <- validate_lasso_stackedImps(
   imputations = imps_combined,
   formula = form, 
   wts = "wts", 
   n_folds = 10,
   lambda_choice = "min",
-  B = 5
+  B = 200
 )
 
 # Save this
-saveRDS(fit_validation_combined, file = "data/validation_combined.rds")
+#saveRDS(fit_validation_combined, file = "data/validation_combined.rds")
+fit_validation_combined <- readRDS("data/validation_combined.rds")
 
 # Summary measures
 fit_validation_combined$validation_summary
@@ -289,6 +299,10 @@ coef(mod_comb)
 
 # Compute linear predictor
 lp_combined <- predict(mod_comb, newx = X_comb)
+
+
+dd <- datadist(imps_combined %>% select(all_of(c(response_var, candidate_predictors)))); 
+options(datadist = "dd")
 
 # RCS val.prob
 val.prob.ci.2(
@@ -314,8 +328,7 @@ mod_lrm$coefficients <- coefs_combined
 
 coef(mod_lrm)
 
-dd <- datadist(imps_combined %>% select(all_of(c(response_var, candidate_predictors)))); 
-options(datadist = "dd")
+
 par(mar=c(2,2,1,1))
 nom <- nomogram(
   fit = mod_lrm, 
@@ -330,6 +343,8 @@ plot(nom)
 print(nom)
 
 
+# End parallel plan
+future::plan(future::sequential)
 
 # Extra test with weighted loess calibration ------------------------------
 
