@@ -60,7 +60,9 @@ imps_univariate_ORs <- function(outcome,
                                 keep_intercepts = FALSE) {
   
   # Check if from mice() or not
-  imp_dats <- mice::complete(imps, action = "all")
+  #imp_dats <- mice::complete(imps, action = "all")
+  
+  imp_dats <- imps
   
   # Run ORs - maybe later exclude intercept
   univariate_analyses <- purrr::map_dfr(.x = predictors, .f = ~ {
@@ -70,7 +72,12 @@ imps_univariate_ORs <- function(outcome,
     # Start pooling
     mods_imp_dats <- lapply(
       X = imp_dats, 
-      FUN = function(imp) glm(form_univar, family = binomial(link = "logit"), data = imp)
+      FUN = function(imp) {
+        # Check first if predictor not totally missing (and not an interaction)
+        if (all(is.na(imp[[.x]])) & !grepl(x = .x, pattern = "\\*")) 
+          form_univar <- update(form_univar, . ~ 1)
+        glm(form_univar, family = binomial(link = "logit"), data = imp)
+      } 
     )  
 
     summary(mice::pool(mods_imp_dats), conf.int = 0.95, exponentiate = TRUE)
@@ -84,26 +91,18 @@ imps_univariate_ORs <- function(outcome,
   return(univariate_analyses)
 }
 
-
-#' Calculate calibration intercept and slope
-#' 
-#' As per van Calster
-#' 
-#' @param y response
-#' @param lp linear predictor
-#' @param wts optional weights
 calibration_intercept_slope <- function(y, lp, wts = NULL) {
   
-  # Check if any fractional weights
-  #family <- ifelse(any((wts %% 1) != 0), "quasibinomial", "binomial")
-  family <- "binomial" # ignore warning
-  
-  # Fit models to linear predictors - CHANGE TO RMS! or suppress warnings
-  mod_lp <- stats::glm(y ~ lp, weights = wts, family = family)
-  mod_offset <- stats::glm(y ~ offset(lp), weights = wts, family = family)
-  result <- c("intercept" = coef(mod_offset)[["(Intercept)"]], "slope" = coef(mod_lp)[["lp"]])
+  # Fit models to linear predictors 
+  mod_lp <- rms::lrm.fit(y = y, x = drop(lp), weights = wts)
+  mod_offset <- rms::lrm.fit(y = y, offset = drop(lp), weights = wts)
+  result <- c(
+    "intercept" = coef(mod_offset)[["Intercept"]], 
+    "slope" = coef(mod_lp)[["x[1]"]]
+  )
   return(result)
 }
+
 
 assess_performance <- function(glmnet_model, # Already with a picked lambda
                                new_x,
@@ -286,5 +285,42 @@ validate_lasso_stackedImps <- function(imputations, # as returned by "long"
     ) %>% 
     mutate(across(where(is.numeric), ~ round(.x, digits = 3)))
   
-  return(results)
+  # Return both model and internal validation procedure
+  list_res <- list("model_fit" = mod_orig, "validation_summary" = results)
+  return(list_res)
+}
+
+
+# To get CI 
+boot_weighted_auc <- function(lp, y, weights = 1, B = 10) {
+  
+  # Prepare predictions to bootstrap
+  auc_dat <- cbind.data.frame("lp" = drop(lp), "label" = drop(y), "wt" = drop(weights))
+  
+  # Get point estimate
+  tpfp <- WeightedROC::WeightedROC(
+    guess = auc_dat$lp, 
+    label = auc_dat$label, 
+    weight = auc_dat$wt
+  )
+  
+  auc_est <- WeightedROC::WeightedAUC(tpfp)
+  
+  # Begin bootstraps
+  aucs_boot <- replicate(
+    n = B,
+    expr = {
+      inds <- sample(nrow(auc_dat), replace = TRUE)
+      boot_dat <- auc_dat[inds, ]
+      tpfp_boot <- WeightedROC::WeightedROC(
+        guess = boot_dat$lp, 
+        label = boot_dat$label, 
+        weight = boot_dat$wt
+      )
+      WeightedROC::WeightedAUC(tpfp_boot)
+    }
+  )
+  
+  res <- c("auc" = auc_est, quantile(aucs_boot, probs = c(0.025, 0.975)))
+  return(res)
 }

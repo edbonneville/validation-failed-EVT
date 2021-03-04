@@ -14,7 +14,13 @@ pacman::p_load(
   "future", # For running bootstraps in parallel
   "furrr", # For running bootstraps in parallel
   "tidyverse", # Data manipulation/plotting
-  "tableone" # For getting data of table one
+  "tableone", # For getting data of table one
+  "WeightedROC" # Calculating AUC on stacked data
+)
+
+# For calibration curves
+pacman::p_load_gh(
+  "BavoDC/CalibrationCurves"
 )
 
 

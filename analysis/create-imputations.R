@@ -5,7 +5,7 @@
 
 # Set contrasts for ordered factors
 options(contrasts = rep("contr.treatment", 2))
-source("R/helper-functions.R")
+source("analysis/helper-functions.R")
 
 # To avoid warnings - the cluster.seed() argument is what assures reproducibility
 set.seed(2021)
