@@ -2,10 +2,12 @@
 ## Process raw data ##
 ##******************##
 
+# Always start with this file.
 
 # Load libraries
 if (!require("pacman")) install.packages("pacman"); library(pacman)
 
+# This checks if packages are installed, if not installs + loads them
 pacman::p_load(
   "rms", # Validation and logistic regression modelling
   "foreign", # Reading-in data, editing labels
@@ -125,9 +127,6 @@ attr(dat_combined, "variable.labels") <- var_labs
 # Save it
 saveRDS(dat_combined, file = "data/combined-data_processed.rds")
 
-# To-do POST imputation:
-#- age to decades
-
 
 # Descriptives ------------------------------------------------------------
 
@@ -156,3 +155,4 @@ print(table_one$ContTable, nonnormal = TRUE)
 
 # Summaries of all categorical variables
 print(table_one$CatTable)
+
