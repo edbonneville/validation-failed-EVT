@@ -20,7 +20,7 @@ pacman::p_load(
   "WeightedROC" # Calculating AUC on stacked data
 )
 
-# For calibration curves
+# For calibration curves - possibly replace with own function for weighted intervals
 pacman::p_load_gh(
   "BavoDC/CalibrationCurves"
 )
@@ -98,7 +98,7 @@ setdiff(names(develop), names(valid))
 dat_combined <- bind_rows(develop, valid, .id = "dataset") %>% 
   mutate(
     dataset = factor(x = dataset, levels = c("1", "2"), labels = c("develop", "valid")),
-    M_premrs = ifelse(M_premrs >= 1, 1, 0), # for table one
+    M_premrs = ifelse(M_premrs >= 1, 1, 0), # For table one
     M_mrs_rev = ifelse(M_mrs_rev >= 3, 1, 0)
   )  %>% 
   
@@ -107,7 +107,8 @@ dat_combined <- bind_rows(develop, valid, .id = "dataset") %>%
     ICAIAtherosclerosis = as.ordered(ICAIAtherosclerosis),
     M_collaterals = as.ordered(M_collaterals),
     InnCca_nr_90orLarger = as.ordered(InnCca_nr_90orLarger),
-    ICA_nr_90orLarger = as.ordered(ICA_nr_90orLarger)
+    ICA_nr_90orLarger = as.ordered(ICA_nr_90orLarger),
+    M_posttici_c = as.ordered(M_posttici_c)
   ) %>% 
   
   # Collapse sparse categories
@@ -117,7 +118,10 @@ dat_combined <- bind_rows(develop, valid, .id = "dataset") %>%
       "3" = c("3", "4", "5"),
       "2" = "2",
       "1" = "1"
-    )
+    ),
+    StudySubjectID = factor(StudySubjectID),
+    M_premrs = factor(M_premrs),
+    M_mrs_rev = factor(M_mrs_rev)
   )
 
 # Keep variable labels
