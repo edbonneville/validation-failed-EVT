@@ -344,7 +344,7 @@ val.prob.ci.2(
   ),
   dostats = FALSE, 
   nr.knots = 4,
-  xlim = c(0, 0.6), # changed to 0.6 
+  xlim = c(0, 0.6), # change to 0.6 
   legendloc = c(0, 0.95)
 )
 dev.off()
