@@ -135,6 +135,8 @@ saveRDS(dat_combined, file = "data/combined-data_processed.rds")
 # Descriptives ------------------------------------------------------------
 
 
+## (!) This bit will now go into an rmarkdown file with tar_read(dat_combined)
+
 # Exclude vars not in table one
 vars_exclude_table <- c("sidescored", "AngleCcaIca", "ICAEAtherosclerosis", "StudySubjectID")
 
