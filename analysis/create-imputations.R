@@ -44,14 +44,8 @@ vars_exclude <- c(
 # We will remove "dataset" (indicator of develop/valid) from imputation model after
 dat_to_impute <- dat_combined %>% select(-all_of(vars_exclude)) 
 
+
 # We already compute weights based on candidate predictors (for stacked data)
-m <- 15 # number of imputed datasets
-iters <- 15 # number of imputation cycles
-
-# Prepare parallel settings too
-n_core <- 3
-n_imp_core <- ceiling(m / n_core) # will do a few more imputations if m not divisible by n_core
-
 candidate_predictors <- c(
   "M_age",
   "M_prev_ht",
@@ -62,19 +56,40 @@ candidate_predictors <- c(
   "ICAE_NASCET_Degree"
 )
 
-# Get weights (check if also depends on auxiliary vars)
+# Get weights for stacked analyses later
+m <- 30 # number of imputed datasets (since needed for weights)
+# We chose 30 to be a little more conservative that prop of incomplete cases
 dat_to_impute[["wts"]] <- (1 - rowMeans(is.na(dat_to_impute[, candidate_predictors]))) / m
 
 # Visualise missings beforehand
 naniar::gg_miss_var(dat_to_impute, facet = dataset, show_pct = TRUE)
 
 
-# Imputation round 1A: development data -----------------------------------
+
+# Data check --------------------------------------------------------------
 
 
 # Seperate datasets
 dat_develop <- subset(x = dat_to_impute, select = -dataset, subset = (dataset == "develop"))
 dat_valid <- subset(x = dat_to_impute, select = -dataset, subset = (dataset == "valid"))
+
+# Check proportion of complete cases in target analysis (quite good, compare results)
+mean(complete.cases(dat_develop[, c("Mc_FailedFemoralApproach", candidate_predictors)]))
+mean(complete.cases(dat_valid[, c("Mc_FailedFemoralApproach", candidate_predictors)]))
+mean(complete.cases(dat_to_impute[, c("Mc_FailedFemoralApproach", candidate_predictors)]))
+
+# Imputation settings
+iters <- 15 # number of imputation cycles
+
+# Prepare parallel settings too
+n_core <- 3
+n_imp_core <- ceiling(m / n_core) # will do a few more imputations if m not divisible by n_core
+
+# Check missing data pattern where in the set with candidate predictors and outcome
+# naniar::gg_miss_upset(dat_to_impute[, c("Mc_FailedFemoralApproach", candidate_predictors)])
+
+# Imputation round 1A: development data -----------------------------------
+
 
 # Run in parallel - number of imputations is n.core * n.imp.core
 imps_dev <- mice::parlmice(

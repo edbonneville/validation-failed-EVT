@@ -197,6 +197,7 @@ y_dev <- imps_develop[[response_var]]
 dd <- datadist(imps_develop %>% select(all_of(c(response_var, candidate_predictors)))); 
 options(datadist = "dd")
 
+# CI probably too narrow?
 CalibrationCurves::val.prob.ci.2(
   y = as.numeric(y_dev) - 1,
   logit = predict(mod_develop, newx = X_dev), 
@@ -249,6 +250,24 @@ tpfp %>%
 # Get CI for external AUC by bootstrap
 # Probably set a seed here again
 boot_weighted_auc(lp_valid, y_valid, wts_valid, B = 200)
+
+
+# Try here with pROC
+auc_df_valid <- cbind.data.frame(
+  ".imp" = imps_valid$.imp,
+  "y_valid" = as.numeric(imps_valid[[response_var]]) - 1,
+  "preds_lp" = drop(predict(mod_develop, newx = X_valid))
+)
+
+# 
+
+test <- by(data = auc_df_valid, INDICES = auc_df_valid$.imp, FUN = function(df) {
+  obj <- pROC::auc(y_valid ~ preds_lp, data = df)
+  cbind("auc" = obj, "se" = pROC::var(obj))
+}, simplify = FALSE)
+test
+hi <- do.call(rbind.data.frame, test)
+psfmi::pool_auc(hi$auc, hi$se, nimp = 15)
 
 # Assess external calibration
 calibration_intercept_slope(y_valid, lp_valid, wts = wts_valid)

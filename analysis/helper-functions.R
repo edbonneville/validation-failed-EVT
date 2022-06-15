@@ -295,6 +295,8 @@ validate_lasso_stackedImps <- function(imputations, # as returned by "long"
 boot_weighted_auc <- function(lp, y, weights = 1, B = 10) {
   
   # Prepare predictions to bootstrap
+  # This is exactly the same as bootsrapping validation set and
+  # predicting in each
   auc_dat <- cbind.data.frame("lp" = drop(lp), "label" = drop(y), "wt" = drop(weights))
   
   # Get point estimate
