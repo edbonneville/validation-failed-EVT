@@ -68,7 +68,7 @@ targets_list <- list(
   # such that we can directly add the weights for the stacked LASSO
   tar_target(
     analysis_settings, 
-    list("m" = 5L, "n_cycles" = 5L, "B" = 10L, "n_folds" = 10L)
+    list("m" = 20L, "n_cycles" = 2L, "B" = 5L, "n_folds" = 10L)
   ),
   tar_target(
     candidate_predictors, c(
