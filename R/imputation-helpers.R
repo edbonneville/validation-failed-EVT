@@ -1,4 +1,4 @@
-# Add weights to combined data 
+# Add weights to combined (validation + development) data 
 add_stacked_weights <- function(dat_combined,
                                 candidate_predictors,
                                 imputation_settings) {
@@ -17,6 +17,7 @@ add_stacked_weights <- function(dat_combined,
   # We will remove "dataset" (indicator of develop/valid) from imputation model after
   dat_to_impute <- dat_combined %>% select(-all_of(vars_exclude))
   
+  # Add weights, see ref: 
   dat_to_impute[["wts"]] <- (1 - rowMeans(is.na(dat_to_impute[, candidate_predictors]))) / 
     imputation_settings$m
   
@@ -40,46 +41,40 @@ run_imputations <- function(dat_to_impute,
     imps <- switch(
       type,
       develop = {
-        mice::parlmice(
+        mice::mice(
           data = dat_develop,
-          n.imp.core = ceiling(imputation_settings$m / imputation_settings$n_cores),
-          cluster.seed = tar_seed(),
+          m = imputation_settings$m,
           method = set_mice_methods(dat_develop),
           predictorMatrix = create_mice_predmatrix(dat = dat_develop, exclude_imp_models = "wts"),
-          n.core = imputation_settings$n_cores,
           maxit = imputation_settings$n_cycles,
-          cl.type = "PSOCK"
+          printFlag = FALSE
         )
       },
       valid = {
-        mice::parlmice(
+        mice::mice(
           data = dat_valid,
-          n.imp.core = ceiling(imputation_settings$m / imputation_settings$n_cores),
-          cluster.seed = tar_seed(),
+          m = imputation_settings$m,
           method = set_mice_methods(dat_valid, skip_impute = c(vascular_vars_develop)),
           predictorMatrix = create_mice_predmatrix(
             dat = dat_valid, 
             exclude_imp_models = c("wts", vascular_vars_develop)
           ),
-          n.core = imputation_settings$n_cores,
           maxit = imputation_settings$n_cycles,
-          cl.type = "PSOCK"
+          printFlag = FALSE
         )
       },
       combined = {
         combined_to_impute <- dat_to_impute %>% select(-all_of(vascular_vars_develop))
-        mice::parlmice(
+        mice::mice(
           data = combined_to_impute,
-          n.imp.core = ceiling(imputation_settings$m / imputation_settings$n_cores),
-          cluster.seed = tar_seed(),
+          m = imputation_settings$m,
           predictorMatrix = create_mice_predmatrix(
             dat = combined_to_impute, 
             exclude_imp_models = c("wts", "dataset")
           ),
           method = set_mice_methods(dat = combined_to_impute),
-          n.core = imputation_settings$n_cores,
-          maxit = imputation_settings$n_cycles,
-          cl.type = "PSOCK"
+          printFlag = FALSE,
+          maxit = imputation_settings$n_cycles
         )
       }
     )
@@ -104,19 +99,17 @@ run_imputations <- function(dat_to_impute,
     predmat_assess[, "Mc_FailedFemoralApproach"] <- 1
     diag(predmat_assess) <- 0 
     
-    imps <- mice::parlmice(
+    imps <- mice::mice(
       data = dat_assess,
-      n.imp.core = ceiling(imputation_settings$m / imputation_settings$n_cores),
-      cluster.seed = tar_seed(),
+      m = imputation_settings$m,
       predictorMatrix = predmat_assess,
       method = set_mice_methods(
         dat = dat_assess, 
         skip_impute = vascular_vars_develop,
         method_adjust = c("Mc_FailedFemoralApproach" = "logreg")
       ),
-      n.core = imputation_settings$n_cores,
       maxit = imputation_settings$n_cycles,
-      cl.type = "PSOCK",
+      printFlag = FALSE,
       ignore = (dat_assess[["dataset"]] == "valid") # Important line
     )
   }
@@ -149,5 +142,55 @@ set_mice_methods <- function(dat, skip_impute = NULL, method_adjust = NULL) {
   return(method_vec)
 }
 
-
+# Bind all the imputation rounds
+bind_imps <- function(imps_list) {
+  
+  # Read-in and transform variables
+  imps_all <- imps_list %>% 
+    map(.f = ~ mice::complete(.x, action = "long")) %>% 
+    bind_rows(.id = "imps_label") %>% 
+    mutate(
+      ICAE_NASCET_Degree = factor(
+        x = ifelse(ICAE_NASCET_Degree < 99, "leq_99", "geq_99"), 
+        levels = c("leq_99", "geq_99")
+      ),
+      InnCca_nr_90orLarger = fct_collapse(
+        .f = InnCca_nr_90orLarger, 
+        "0" = "0", 
+        "geq_1" = c("1", "2", "3")
+      ),
+      ICA_nr_90orLarger = fct_collapse(
+        .f = ICA_nr_90orLarger, 
+        "0" = "0", 
+        "geq_1" = c("1", "2", "3")
+      ),
+      ICAIAtherosclerosis = fct_collapse(
+        .f = ICAIAtherosclerosis, 
+        "under50%" = c("No", "Yes, calcified spots", "Yes, <50% stenosis"),
+        "geq50%" = "Yes, >=50% stenosis"
+      ),
+      AngleAaInn_OR_AaCca = factor(
+        x = ifelse(AngleAaInn_OR_AaCca > 45, "above45", "leq45"),
+        levels = c("above45", "leq45")
+      ),
+      M_age = M_age / 10 # Change to decades
+    )  
+  
+  # Change back to true outcome for assess imps 
+  # (where validation outcome was implicitly imputed)
+  imps_all <- imps_all %>% 
+    mutate(
+      Mc_FailedFemoralApproach = ifelse(
+        imps_label == "imps_assess", 
+        as.character(outcome_true), 
+        as.character(Mc_FailedFemoralApproach)
+      ),
+      Mc_FailedFemoralApproach = factor(
+        x = Mc_FailedFemoralApproach, 
+        levels = c("success", "failure")
+      )
+    )
+  
+  return(imps_all)
+}
 

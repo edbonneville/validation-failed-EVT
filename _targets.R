@@ -7,6 +7,8 @@
 # Workhorse packages
 library("targets")
 library("tarchetypes")
+library("future")
+library("future.callr")
 
 # All packages used by the projects - this is not good for renv (add instead to _packages.R files)
 project_pkgs <- c(
@@ -17,22 +19,26 @@ project_pkgs <- c(
   "future", # For running bootstraps in parallel
   "furrr", # For running bootstraps in parallel
   "tidyverse", # Data manipulation/plotting
-  "tableone", # For getting data of table one
-  "WeightedROC", # Calculating AUC on stacked data
-  "parallel"
+  "tableone" # For getting data of table one
 )
 
 tar_option_set(packages = project_pkgs, error = "continue")
 # Uncomment if running scripts interactively:
 # sapply(project_pkgs, function(pkg) require(pkg, character.only = TRUE)); rm(project_pkgs)
 
+plan(callr)
+
 
 # Analysis pipeline -------------------------------------------------------
 
 
+# Verify whether this works here.. other inside funs 
+options(contrasts = rep("contr.treatment", 2))
+
 # Source support functions
 source("data-raw/prepare_raw_data.R")
 source("R/imputation-helpers.R")
+source("R/model-validation-helpers.R")
 
 # Pipeline (parts are in separate files):
 targets_list <- list(
@@ -59,8 +65,11 @@ targets_list <- list(
   # -- Part 2: imputations
   
   # We pick the number of imputations and specify our candidate predictors
-  # such that we can directly add the weights for the stacked LASOO
-  tar_target(imputation_settings, list("m" = 3L, "n_cycles" = 2L, "n_cores" = 1L)),
+  # such that we can directly add the weights for the stacked LASSO
+  tar_target(
+    analysis_settings, 
+    list("m" = 5L, "n_cycles" = 5L, "B" = 10L, "n_folds" = 10L)
+  ),
   tar_target(
     candidate_predictors, c(
       "M_age",
@@ -74,83 +83,66 @@ targets_list <- list(
   ),
   tar_target(
     dat_to_impute, 
-    add_stacked_weights(dat_combined, candidate_predictors, imputation_settings)
+    add_stacked_weights(dat_combined, candidate_predictors, analysis_settings)
   ),
   
-  # (For univariable assessments: run imputation on develop and validation separately)
-  #tar_target(imps_dev, run_imputations(dat_to_impute, imputation_settings, type = "develop"))
+  # All rounds of imputations here:
+  tar_target(imps_dev, run_imputations(dat_to_impute, analysis_settings, type = "develop")),
+  tar_target(imps_valid, run_imputations(dat_to_impute, analysis_settings, type = "valid")),
+  tar_target(imps_assess, run_imputations(dat_to_impute, analysis_settings, type = "model")),
+  tar_target(imps_combined, run_imputations(dat_to_impute, analysis_settings, type = "combined")),
+  
+  # Combine all imputed datasets in one big df
   tar_target(
-    dat_develop, subset(x = dat_to_impute, select = -dataset, subset = (dataset == "develop"))
+    imps_all, 
+    bind_imps(
+      list(
+        "imps_dev" = imps_dev, 
+        "imps_valid" = imps_valid, 
+        "imps_assess" = imps_assess,
+        "imps_combined" = imps_combined
+      )
+    ), 
+    format = "fst"
+  ),
+  
+  # Model validation..
+  tar_target(
+    model_formula, 
+    reformulate(termlabels = candidate_predictors, response = "Mc_FailedFemoralApproach")
+  ),
+  # Internal validation development set
+  tar_target(
+    fit_validation_develop,
+    validate_lasso_stackedImps(
+      imputations = imps_all %>% filter(imps_label == "imps_assess" & dataset == "develop"),
+      formula = model_formula,
+      wts = "wts",
+      n_folds = analysis_settings$n_folds,
+      lambda_choice = "min",
+      B = analysis_settings$B
+    )
   ),
   tar_target(
-    imps_dev,
-    {
-      
-      cl<-makeCluster(3L, type = "PSOCK")
-      #::detectCores()
-      dat_dev <- dat_develop
-      
-      base <- 2
-      clusterExport(cl, varlist = c("base", ls(parent.frame())), 
-                    envir = environment())
-      parLapply(cl,  2:4, 
-                function(exponent)dat_dev$M_age[1])
-      
-     # stopCluster(cl)
-      
-      #list(
-      #  ls(parent.frame()),
-      #  ls(environment())
-      #)
-      
-      
-      #assign("dat_develop", dat_develop, envir = .GlobalEnv)
-      #assign("dat_develop", dat_develop, envir = .GlobalEnv)
-      #assign("imputation_settings", imputation_settings, envir = .GlobalEnv)
-      #source("R/imputation-helpers.R", local = .GlobalEnv)
-      #assign("create_mice_predmatrix", create_mice_predmatrix, envir = .GlobalEnv)
-      #assign("dat_develop", dat_develop, envir = environment())
-      #assign("imputation_settings", imputation_settings, envir = environment())
-      #assign("set_mice_methods", set_mice_methods, envir = environment())
-      #meths <<- set_mice_methods(dat_develop)
-      #predmat <<- create_mice_predmatrix(dat = dat_develop, exclude_imp_models = "wts")
-      
-      # assign("dat_develop", dat_develop, envir = parent.frame())
-
-    }, 
+    fit_validation_combined,
+    validate_lasso_stackedImps(
+      imputations = imps_all %>% filter(imps_label == "imps_combined"),
+      formula = model_formula,
+      wts = "wts",
+      n_folds = analysis_settings$n_folds,
+      lambda_choice = "min",
+      B = analysis_settings$B
+    )
   )
-  # tar_target(
-  #   imps_dev, 
-  #   {
-  #     
-  #     mice::parlmice(
-  #       data = dat_develop,
-  #       n.imp.core = ceiling(imputation_settings$m / imputation_settings$n_cores),
-  #       cluster.seed = tar_seed(),
-  #       method = set_mice_methods(dat_develop),
-  #       predictorMatrix = create_mice_predmatrix(dat = dat_develop, exclude_imp_models = "wts"),
-  #       n.core = imputation_settings$n_cores,
-  #       maxit = imputation_settings$n_cycles,
-  #       cl.type = "PSOCK"
-  #     )
-  #   }, 
-  #   deployment = "main"
-  # )
-  
-  
   
   #tarchetypes::tar_render(analysis_summary, path = "analysis/2020-09_analysis-summary.Rmd")
-  #tarchetypes::tar_render([and rmd with raw data visualisations, also after data prep..
-  #.. interactive with plotly?])
-  # Or with shiny??
 )
 
 # Source targets
 #("R/NMA-preDLI-models.R")
 #source("R/NMA-postDLI-models.R")
 
-#targets_list <- c(targets_list, preDLI_targets, postDLI_targets)
+#targets_list <- c(targets_list, bind_imps)
 targets_list
-
 
     

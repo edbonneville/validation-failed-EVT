@@ -83,7 +83,7 @@ imps_all <- imps_all %>%
     )
   )
 
-# Univariate analyses -----------------------------------------------------
+# Univariable analyses ----------------------------------------------------
 
 
 # Do this for all and make table
