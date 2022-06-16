@@ -248,11 +248,80 @@ split(df_calplot_develop, ~ .imp) %>%
 imps_valid <- imps_all %>% 
   filter(imps_label == "imps_assess" & dataset == "valid")
 
-X_valid <- subset(x = stats::model.matrix(form, data = imps_valid), select = -`(Intercept)`)
+X_valid <- subset(x = stats::model.matrix(model_formula, data = imps_valid), select = -`(Intercept)`)
 y_valid <- imps_valid[[response_var]]
-wts_valid <- imps_valid[["wts"]]
 
 # Compute linear predictor
-lp_valid <- predict(mod_develop, newx = X_valid)
+lp_valid <- drop(predict(mod_develop, newx = X_valid))
+df_calplot_valid <- cbind.data.frame(lp_valid, imps_valid)
+
+# Pool AUC
+auc_df <- split(df_calplot_valid, ~ .imp) %>%
+  map(.f = ~ {
+    auc_obj <- pROC::auc(Mc_FailedFemoralApproach ~ lp_valid, data = .x)
+    cbind.data.frame("auc" = as.numeric(auc_obj), "var_auc" = pROC::var(auc_obj))
+  }) %>%
+  bind_rows(.id = ".imp") 
+
+psfmi::pool_auc(auc_df$auc, sqrt(auc_df$var_auc), nimp = max(as.numeric(auc_df$.imp)))
 
 
+# Now go calibration plot
+
+
+# Get sequence of predict
+knots <- 4
+pred_probs <- plogis(df_calplot_valid$lp_valid)
+probs_grid <- seq(min(pred_probs), max(pred_probs), by = 0.01)
+lp_grid <- qlogis(probs_grid)
+
+# What do we do? plot all calib plots in one figure, with flexible on entire stacked
+# ... as dark
+mod_cal_stacked <- glm(
+  formula = Mc_FailedFemoralApproach ~ ns(lp_valid, 4), 
+  data = df_calplot_valid, 
+  family = binomial()
+)
+
+predicted_stacked <- predict(mod_cal_stacked, newdata = data.frame("lp_valid" = lp_grid), type = "response")
+
+split(df_calplot_valid, ~ .imp) %>%
+  map(
+    .f = ~ {
+      mod_cal <- glm(
+        formula = Mc_FailedFemoralApproach ~ ns(lp_valid, 4), 
+        data = .x, 
+        family = binomial()
+      )
+      data.frame(
+        "predicted" = probs_grid,
+        "observed" = predict(mod_cal, newdata = data.frame("lp_valid" = lp_grid), type = "response"),
+        row.names = NULL
+      )
+    }
+  ) %>%
+  bind_rows(.id = ".imp") %>%
+  ggplot(aes(predicted, observed)) +
+  geom_abline(intercept = 0, slope = 1, col = "red", size = 1) +
+  geom_line(aes(group = .imp), alpha = 0.5) +
+  theme_minimal(base_size = 14) +
+  theme(panel.grid.major = element_blank()) + 
+  geom_line(
+    data = cbind.data.frame(
+      "predicted" = probs_grid,
+      "observed" = predict(mod_cal_stacked, newdata = data.frame("lp_valid" = lp_grid), type = "response")
+    ),
+    size = 2
+  ) +
+  lims(x = c(0, 0.8), y = c(0, 0.8))
+
+# And cal intercept + slope
+split(df_calplot_valid, ~ .imp) |> 
+  map(.f = ~ glm(Mc_FailedFemoralApproach ~ lp_valid, family = binomial, data = .x)) |> 
+  pool() |> 
+  summary()
+
+split(df_calplot_valid, ~ .imp) |> 
+  map(.f = ~ glm(Mc_FailedFemoralApproach ~ offset(lp_valid), family = binomial, data = .x)) |> 
+  pool() |> 
+  summary()
