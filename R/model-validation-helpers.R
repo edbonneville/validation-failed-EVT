@@ -126,17 +126,8 @@ assess_performance <- function(glmnet_model, # Already with a picked lambda
                                new_x,
                                new_y) {
   
-  print(coef(glmnet_model))
-  
   # Compute linear predictor
   lp <- drop(glmnet::predict.glmnet(glmnet_model, newx = new_x))
-  print(head(lp))
-  print(
-    head(
-      drop(as.numeric(coef(glmnet_model)) %*% t(cbind(1, new_x)))
-    )
-  )
-  print(head(new_x, 3))
   
   # Get performance measures from within glmnet (incl. AUC on stacked)
   general_performance <- glmnet::assess.glmnet(
@@ -164,6 +155,9 @@ validate_lasso_stackedImps <- function(imputations, # as returned by "long"
                                        lambda_choice = c("min", "1se"),
                                        B = 5) {
   
+  # For ordered covariates to be safe (not sure if Targets passes this on)
+  options(contrasts = rep("contr.treatment", 2))
+  
   # match arg lambda
   lambda_choice <- match.arg(lambda_choice)
   
@@ -188,8 +182,6 @@ validate_lasso_stackedImps <- function(imputations, # as returned by "long"
     new_x = X_orig, 
     new_y = y_orig
   )
-  
-  print(apparent_perform)
   
   # Bootstrap model frame to avoid calling model.matrix too many times
   prepped_dat <- cbind.data.frame(y_orig, ".id" = imputations[[".id"]], X_orig, wts_orig)
@@ -240,10 +232,11 @@ validate_lasso_stackedImps <- function(imputations, # as returned by "long"
       # Performance
       res_boot <- cbind.data.frame(
         "measure" = training_perform[["measure"]],
+        "penalty" = mod_boot$lambda, # also store lambda to compute average / compare
         "apparent" = apparent_perform[["value"]],
         "training" = training_perform[["value"]],
         "test" = test_perform[["value"]],
-        "optimism" = training_perform[["value"]] - test_perform[["value"]]
+        "optimism" = training_perform[["value"]] - test_perform[["value"]] 
       )
       
       # Compute corrected measure
@@ -262,7 +255,8 @@ validate_lasso_stackedImps <- function(imputations, # as returned by "long"
       optimism = mean(optimism),
       lower_corrected = quantile(x = corrected, probs = 0.025),
       upper_corrected = quantile(x = corrected, probs = 0.975),
-      corrected = mean(corrected)
+      corrected = mean(corrected),
+      lambda_avg = mean(penalty)
     ) %>% 
     mutate(across(where(is.numeric), ~ round(.x, digits = 3)))
   

@@ -27,7 +27,7 @@ tar_option_set(packages = project_pkgs, error = "continue")
 # Uncomment if running scripts interactively:
 # sapply(project_pkgs, function(pkg) require(pkg, character.only = TRUE)); rm(project_pkgs)
 
-plan(callr) #list(plan(callr), plan(callr))# nest for furrr part
+list(plan(callr), plan(callr))# nest for furrr part
 
 
 # Analysis pipeline -------------------------------------------------------
@@ -114,14 +114,25 @@ targets_list <- list(
   ),
   # # Internal validation development set
   tar_target(
-    fit_validation_dev,
+    validation_dev_min,
     validate_lasso_stackedImps(
       imputations = imps_all %>% filter(imps_label == "imps_assess" & dataset == "develop"),
       formula = model_formula,
       wts = "wts",
       n_folds = analysis_settings$n_folds,
       lambda_choice = "min", #"1se", # crazy results with 1se
-      B = 2 #analysis_settings$B
+      B = 10 #analysis_settings$B
+    )
+  ),
+  tar_target(
+    validation_dev_1se,
+    validate_lasso_stackedImps(
+      imputations = imps_all %>% filter(imps_label == "imps_assess" & dataset == "develop"),
+      formula = model_formula,
+      wts = "wts",
+      n_folds = analysis_settings$n_folds,
+      lambda_choice = "1se", #"1se", # crazy results with 1se
+      B = 10 #analysis_settings$B
     )
   )#,
   # tar_target(

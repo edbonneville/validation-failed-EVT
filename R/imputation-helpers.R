@@ -1,4 +1,13 @@
-# Add weights to combined (validation + development) data 
+#' Add weights to combined (validation + development) data 
+#' 
+#' See Wan et al. (2015), or notation in section 2.2 from
+#' Thao et al. (2019). The weights used in the LASSO procedure are equal to
+#' 1/m * (number of non-missing variable for subject i / p), where m is the
+#' number of imputed datasets, and p the number of candidate predictors.
+#' 
+#' In the function we also exclude variables not relevant to either
+#' imputation or analysis model.
+#'  
 add_stacked_weights <- function(dat_combined,
                                 candidate_predictors,
                                 imputation_settings) {
@@ -24,9 +33,22 @@ add_stacked_weights <- function(dat_combined,
   return(dat_to_impute)
 }
 
+#' Worker function for multiple imputation
+#' 
+#' Four rounds of imputation are performed:
+#' - Once for development set alone (for univariable analyses)
+#' - Once for validation set alone (for univariable analyses)
+#' - Once as part of model validation, imputing both development and 
+#' validation data using imputation models fitted only on development set. This
+#' procedure is described in Hoogland et al. (2020)
+#' - Once on combined cohort
+#' 
 run_imputations <- function(dat_to_impute,
                             imputation_settings,
                             type = c("develop", "valid", "model", "combined")) {
+  
+  # For ordered covariates to be safe (not sure if Targets passes this on)
+  options(contrasts = rep("contr.treatment", 2))
   
   # Read-in valid and develop separately
   dat_develop <- subset(x = dat_to_impute, select = -dataset, subset = (dataset == "develop"))
@@ -117,6 +139,9 @@ run_imputations <- function(dat_to_impute,
   return(imps)
 }
 
+#' Version of `mice::make.predictorMatrix()` with additional argument
+#' allowing to exclude variables from all imputation models.
+#' 
 create_mice_predmatrix <- function(dat, exclude_imp_models = NULL) {
   
   # Make basic matrix
@@ -128,7 +153,11 @@ create_mice_predmatrix <- function(dat, exclude_imp_models = NULL) {
   return(matpred)
 }
 
-# method adjust is names list i.e. c("ICAIAtherosclerosis" = "norm")
+#' Extended version of `mice::make.method()`
+#' 
+#' The `method_adjust` argument is a nameed list 
+#' i.e. c("ICAIAtherosclerosis" = "norm")
+#' 
 set_mice_methods <- function(dat, skip_impute = NULL, method_adjust = NULL) {
   
   method_vec <- mice::mice(dat, m = 1, maxit = 0)[["method"]]
@@ -142,7 +171,8 @@ set_mice_methods <- function(dat, skip_impute = NULL, method_adjust = NULL) {
   return(method_vec)
 }
 
-# Bind all the imputation rounds
+#' Bind all the imputation rounds in long format
+#' 
 bind_imps <- function(imps_list) {
   
   # Read-in and transform variables

@@ -1,3 +1,9 @@
+#' Combines development and validation cohort
+#' 
+#' Does this to harmonize variable codings,
+#' and prepare factor variables for imputation
+#' (specifying ordered or not)
+#' 
 prepare_raw_data <- function(develop_raw, valid_raw) {
   
   # Prepare development data
@@ -39,9 +45,6 @@ prepare_raw_data <- function(develop_raw, valid_raw) {
         "Yes, angle >=90 degrees" = "yes"
       )
     )
-  
-  # Check which from develop are not in valid
-  #setdiff(names(develop), names(valid))
   
   # Combine datasets
   dat_combined <- bind_rows(develop, valid, .id = "dataset") %>% 
