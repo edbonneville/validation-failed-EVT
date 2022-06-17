@@ -19,14 +19,15 @@ project_pkgs <- c(
   "future", # For running bootstraps in parallel
   "furrr", # For running bootstraps in parallel
   "tidyverse", # Data manipulation/plotting
-  "tableone" # For getting data of table one
+  "tableone", # For getting data of table one
+  "splines"
 )
 
 tar_option_set(packages = project_pkgs, error = "continue")
 # Uncomment if running scripts interactively:
 # sapply(project_pkgs, function(pkg) require(pkg, character.only = TRUE)); rm(project_pkgs)
 
-plan(callr)
+plan(callr) #list(plan(callr), plan(callr))# nest for furrr part
 
 
 # Analysis pipeline -------------------------------------------------------
@@ -68,7 +69,7 @@ targets_list <- list(
   # such that we can directly add the weights for the stacked LASSO
   tar_target(
     analysis_settings, 
-    list("m" = 20L, "n_cycles" = 2L, "B" = 5L, "n_folds" = 10L)
+    list("m" = 50L, "n_cycles" = 15L, "B" = 200L, "n_folds" = 10L)
   ),
   tar_target(
     candidate_predictors, c(
@@ -94,47 +95,47 @@ targets_list <- list(
   
   # Combine all imputed datasets in one big df
   tar_target(
-    imps_all, 
+    imps_all,
     bind_imps(
       list(
-        "imps_dev" = imps_dev, 
-        "imps_valid" = imps_valid, 
+        "imps_dev" = imps_dev,
+        "imps_valid" = imps_valid,
         "imps_assess" = imps_assess,
         "imps_combined" = imps_combined
       )
-    ), 
+    ),
     format = "fst"
   ),
-  
+
   # Model validation..
   tar_target(
-    model_formula, 
+    model_formula,
     reformulate(termlabels = candidate_predictors, response = "Mc_FailedFemoralApproach")
   ),
-  # Internal validation development set
+  # # Internal validation development set
   tar_target(
-    fit_validation_develop,
+    fit_validation_dev,
     validate_lasso_stackedImps(
       imputations = imps_all %>% filter(imps_label == "imps_assess" & dataset == "develop"),
       formula = model_formula,
       wts = "wts",
       n_folds = analysis_settings$n_folds,
-      lambda_choice = "min",
-      B = analysis_settings$B
+      lambda_choice = "min", #"1se", # crazy results with 1se
+      B = 2 #analysis_settings$B
     )
-  ),
-  tar_target(
-    fit_validation_combined,
-    validate_lasso_stackedImps(
-      imputations = imps_all %>% filter(imps_label == "imps_combined"),
-      formula = model_formula,
-      wts = "wts",
-      n_folds = analysis_settings$n_folds,
-      lambda_choice = "min",
-      B = analysis_settings$B
-    )
-  )
-  
+  )#,
+  # tar_target(
+  #   fit_validation_combined,
+  #   validate_lasso_stackedImps(
+  #     imputations = imps_all %>% filter(imps_label == "imps_combined"),
+  #     formula = model_formula,
+  #     wts = "wts",
+  #     n_folds = analysis_settings$n_folds,
+  #     lambda_choice = "min",
+  #     B = analysis_settings$B
+  #   )
+  # )
+  # 
   #tarchetypes::tar_render(analysis_summary, path = "analysis/2020-09_analysis-summary.Rmd")
 )
 

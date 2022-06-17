@@ -1,121 +1,111 @@
-# Testing new analyses
-tar_load(
-  c(
-    dat_to_impute,
-    imps_all,
-    candidate_predictors
-  )
-)
+# You actual knob, please FUCKING keep the next line!!!
+# (or always add explicit contrasts to model matrix)
+options(contrasts = rep("contr.treatment", 2))
+
 
 source("data-raw/prepare_raw_data.R")
 source("R/imputation-helpers.R")
 source("R/model-validation-helpers.R")
 
-# Development imputation
-imps_develop <- imps_all %>% 
-  filter(imps_label == "imps_assess" & dataset == "develop")
+# Minimal packages for now
+library(targets)
+library(glmnet)
+library(tidyverse)
 
-# General model formula - keep response character
-form <- reformulate(termlabels = candidate_predictors, response = "Mc_FailedFemoralApproach")
-response_var <- all.vars(stats::update(form, . ~ 1))
-form
+targets::tar_load(
+  c(
+    dat_to_impute,
+    imps_all,
+    candidate_predictors, 
+    fit_validation_dev,
+    #fit_validation_develop,
+    model_formula,
+    analysis_settings
+  )
+)
 
 
-fit_validation_develop <- validate_lasso_stackedImps(
-  imputations = imps_develop,
-  formula = form,
+#
+set.seed(targets::tar_meta(fit_validation_dev, seed)$seed)
+test <- validate_lasso_stackedImps(
+  imputations = dplyr::filter(imps_all, imps_label == "imps_assess" & dataset == "develop"),
+  formula = model_formula,
   wts = "wts",
-  n_folds = 10,
-  lambda_choice = "min",
-  B = 5
+  n_folds = analysis_settings$n_folds,
+  lambda_choice = "min", #"1se", # crazy results with 1se
+  B = 2 #analysis_settings$B
 )
-fit_validation_develop$validation_summary
+
+all.equal(test$model_fit, fit_validation_dev$model_fit)
+cbind(coef(test$model_fit), glmnet::coef.glmnet(fit_validation_dev$model_fit))
+
+# 
+dat <- dplyr::filter(imps_all, imps_label == "imps_assess" & dataset == "develop")
+head(
+  drop(as.numeric(coef(fit_validation_dev$model_fit)) %*% t(stats::model.matrix(model_formula, data = dat)))
+)
 
 
-# (figure out nested futures for bootstrap here..)
 
 
-formula <- form
-lambda_choice <- "min"
-imputations <- imps_develop
+# Model
+dat <- dplyr::filter(imps_all, imps_label == "imps_assess" & dataset == "develop")
+model <- fit_validation_dev$model_fit 
+coef(model)
+coef(glm(model_formula, data = dat, family = binomial()))
+X_new <- subset(x = stats::model.matrix(model_formula, data = dat), select = -`(Intercept)`)
+head(
+  predict.glmnet(model, newx = X_new, type = "link")
+)
+head(
+drop(as.numeric(coef(model)) %*% t(stats::model.matrix(model_formula, data = dat)))
+)
+
+#-- for actual code:
+mod_orig <- fit_validation_dev$model_fit
+imputations <- dplyr::filter(imps_all, imps_label == "imps_assess" & dataset == "develop")
+formula <- model_formula
 wts <- "wts"
-n_folds <- 10
-
-# Extract model matrix and response variable names
-response_var <- all.vars(stats::update(formula, . ~ 1))
-X_orig <- subset(x = stats::model.matrix(formula, data = imputations), select = -`(Intercept)`)
-y_orig <- imputations[[response_var]]
-wts_orig <- imputations[[wts]]
-
-# First apparent performance
-folds <- assign_crossval_folds(y = unique(imputations[[".id"]]), n_folds = n_folds)
-mod_orig <- run_lasso_glmnet(
-  x = X_orig,
-  y = y_orig,
-  wts = wts_orig,
-  foldid = folds[match(imputations[[".id"]], folds[["y"]]), "fold"],
-  lambda_choice = lambda_choice
-)
-
-lp <- drop(glmnet::predict.glmnet(mod_orig, newx = X_orig))
-
-# Pooled calibration intercepts and slope
-imps_develop$lp <- lp
-
-# New calibrations and intercept slopes 
-split(imps_develop, ~ .imp) |> 
-  map(.f = ~ glm(Mc_FailedFemoralApproach ~ lp, family = binomial, data = .x)) |> 
-  pool() |> 
-  summary()
-
-split(imps_develop, ~ .imp) |> 
-  map(.f = ~ glm(Mc_FailedFemoralApproach ~ offset(lp), family = binomial, data = .x)) |> 
-  pool() |> 
-  summary()
-
-calibration_intercept_slope(y = imps_develop$Mc_FailedFemoralApproach, lp = lp)
-
-split(imps_develop, ~ .imp) |> 
-  map(.f = ~ pROC::auc(formula = Mc_FailedFemoralApproach ~ lp, data = .x)) |> 
-  unlist() |> 
-  mean()
-
-glmnet::assess.glmnet(
-  object = mod_orig, 
-  newx = X_orig, 
-  newy = imps_develop$Mc_FailedFemoralApproach, 
-  family = "binomial"#,
-  #weights = wts_orig
-)$auc
-
-apparent_perform <- assess_performance(
- glmnet_model = mod_orig,
- new_x = X_orig,
- new_y = y_orig,
- wts = wts_orig
-)
+#--
 
 
+# Need to figure out mystery of cal slope/intercept apparent --------------
+
+imps_develop <- imps_all %>% filter(imps_label == "imps_assess" & dataset == "develop")
+response_var <- all.vars(stats::update(model_formula, . ~ 1))
+X_orig <- subset(x = stats::model.matrix(model_formula, data = imps_develop), select = -`(Intercept)`)
+y_orig <- imps_develop[[response_var]]
+
+head(drop(glmnet::predict.glmnet(mod_orig, newx = X_orig)))
+
+
+assess_performance(fit_validation_dev$model_fit, X_orig, y_orig)
+
+lp2 <- drop(predict.glmnet(fit_validation_dev$model_fit, newx = X_orig))
+intercept <- coef(fit_validation_dev$model_fit)[1, ]
+
+#glm(y_orig ~ offset(lp), family = binomial())
+glm(y_orig ~ offset(I(lp2 + intercept)), family = binomial())
 
 
 # New part ----------------------------------------------------------------
 
 
-tar_load(
-  c(
-    dat_to_impute,
-    imps_all,
-    candidate_predictors, 
-    fit_validation_develop,
-    model_formula
-  )
-)
+
 
 imps_develop <- imps_all %>% filter(imps_label == "imps_assess" & dataset == "develop")
 response_var <- all.vars(stats::update(model_formula, . ~ 1))
 
 # Model to externally validate
-mod_develop <- fit_validation_develop$model_fit
+mod_develop <- fit_validation_dev$model_fit
+
+fit_validation_dev$validation_summary
+
+fit_validation_dev$validation_df |> 
+  filter(measure %in% c("auc", "intercept", "slope")) |> 
+  ggplot(aes(x = corrected)) +
+  geom_histogram() +
+  facet_wrap(~ measure)
 
 # Get coefficients (table 4) - this is LASSO coefficients on development data
 coef(mod_develop)
@@ -126,70 +116,25 @@ X_dev <- subset(x = stats::model.matrix(model_formula, data = imps_develop), sel
 y_dev <- imps_develop[[response_var]]
 lp_dev <- drop(predict(mod_develop, newx = X_dev))
 
+glm(y_dev ~ offset(lp_dev), family = binomial())
+
+
 df_calplot_develop <- cbind.data.frame(lp_dev, imps_develop)
 
-# Try first without accounting for uncertainty
-library(splines)
-mod_rcs_nopool <- lrm(
-  Mc_FailedFemoralApproach ~ ns(lp_dev, 4), 
-  data = df_calplot_develop, 
-  x = TRUE # after check diff with weights..
+# Check auc on stacked is more/less same auc on individuals
+split(df_calplot_develop, ~ .imp) %>%
+  map(.f = ~ {
+    auc_obj <- pROC::auc(Mc_FailedFemoralApproach ~ lp_dev, data = .x)
+    cbind.data.frame("auc" = as.numeric(auc_obj), "var_auc" = pROC::var(auc_obj))
+  }) %>%
+  bind_rows(.id = ".imp") %>%
+  summarise(auc = mean(auc))
+
+as.numeric(pROC::auc(Mc_FailedFemoralApproach ~ lp_dev, data = df_calplot_develop))
+
+assess_performance(
+  mod_orig, X_dev, df_calplot_develop$Mc_FailedFemoralApproach
 )
-L <- predict(mod_rcs_nopool, se.fit = TRUE) 
-CIs <- plogis(with(L, linear.predictors + 1.96*cbind(-se.fit,se.fit)))
-plot(plogis(lp_dev), plogis(L$linear.predictors), type = "p", xlim = c(0, 0.8),
-     ylim = c(0, 1))
-abline(c(0, 1))
-points(plogis(lp_dev), CIs[, 1])
-points(plogis(lp_dev), CIs[, 2])
-
-# Second: with weights
-mod_rcs_nopool_wts <- lrm(
-  Mc_FailedFemoralApproach ~ ns(lp_dev, 4), 
-  data = df_calplot_develop, 
-  x = TRUE, # after check diff with weights..
-  weights = df_calplot_develop$wts
-)
-L <- predict(mod_rcs_nopool_wts, se.fit = TRUE) 
-CIs <- plogis(with(L, linear.predictors + 1.96*cbind(-se.fit,se.fit)))
-plot(plogis(lp_dev), plogis(L$linear.predictors), type = "p", xlim = c(0, 0.8),
-     ylim = c(0, 1))
-abline(c(0, 1))
-points(plogis(lp_dev), CIs[, 1])
-points(plogis(lp_dev), CIs[, 2])
-
-
-# Try now with pooling
-library(splines)
-split(df_calplot_develop, ~ .imp) |> 
-  map(
-    .f = ~ glm(
-      Mc_FailedFemoralApproach ~ ns(lp_dev, 4), 
-      data = .x, 
-      family = binomial() # after check diff with weights..
-    )
-  ) |> 
-  pool() |> 
-  summary()
-
-mod_rcs_nopool_wts
-
-
-mod_rcs_nopool <- lrm(
-  Mc_FailedFemoralApproach ~ ns(lp_dev, 4), 
-  data = df_calplot_develop, 
-  x = TRUE # after check diff with weights..
-)
-L <- predict(mod_rcs_nopool, se.fit = TRUE) 
-CIs <- plogis(with(L, linear.predictors + 1.96*cbind(-se.fit,se.fit)))
-plot(plogis(lp_dev), plogis(L$linear.predictors), type = "p", xlim = c(0, 0.8),
-     ylim = c(0, 1))
-abline(c(0, 1))
-points(plogis(lp_dev), CIs[, 1])
-points(plogis(lp_dev), CIs[, 2])
-
-
-
 
 
 # Knots = 4 ---------------------------------------------------------------
@@ -203,18 +148,19 @@ lp_grid <- qlogis(probs_grid)
 # What do we do? plot all calib plots in one figure, with flexible on entire stacked
 # ... as dark
 mod_cal_stacked <- glm(
-  formula = Mc_FailedFemoralApproach ~ ns(lp_dev, 4), 
+  formula = Mc_FailedFemoralApproach ~ ns(lp_dev, knots), 
   data = df_calplot_develop, 
   family = binomial()
 )
 
-predicted_stacked <- predict(mod_cal_stacked, newdata = data.frame("lp_dev" = lp_grid), type = "response")
+predicted_stacked <- predict(mod_cal_stacked, 
+                             newdata = data.frame("lp_dev" = lp_grid), type = "response")
 
 split(df_calplot_develop, ~ .imp) %>%
   map(
     .f = ~ {
       mod_cal <- glm(
-        formula = Mc_FailedFemoralApproach ~ ns(lp_dev, 4), 
+        formula = Mc_FailedFemoralApproach ~ ns(lp_dev, knots), 
         data = .x, 
         family = binomial()
       )
@@ -227,8 +173,7 @@ split(df_calplot_develop, ~ .imp) %>%
   ) %>%
   bind_rows(.id = ".imp") %>%
   ggplot(aes(predicted, observed)) +
-  geom_abline(intercept = 0, slope = 1, col = "red", size = 1) +
-  geom_line(aes(group = .imp), alpha = 0.5) +
+  geom_line(aes(group = .imp), alpha = 0.8, col = "lightgray", size = 1) +
   theme_minimal(base_size = 14) +
   theme(panel.grid.major = element_blank()) + 
   geom_line(
@@ -237,8 +182,28 @@ split(df_calplot_develop, ~ .imp) %>%
       "observed" = predict(mod_cal_stacked, newdata = data.frame("lp_dev" = lp_grid), type = "response")
     ),
     size = 2
-  )
+  ) +
+  geom_abline(intercept = 0, slope = 1, col = "red", size = 1, linetype = "dashed") 
+  
 
+# And cal intercept + slope
+split(df_calplot_develop, ~ .imp) |> 
+  map(.f = ~ glm(Mc_FailedFemoralApproach ~ lp_dev, family = binomial, data = .x)) |> 
+  pool() |> 
+  summary()
+
+split(df_calplot_develop, ~ .imp) |> 
+  map(.f = ~ glm(Mc_FailedFemoralApproach ~ offset(lp_dev), family = binomial, data = .x)) |> 
+  pool() |> 
+  summary()
+
+glm(Mc_FailedFemoralApproach ~ offset(lp_dev), family = binomial(), data = df_calplot_develop)
+
+assess_performance(
+  mod_develop,
+  X_dev,
+  df_calplot_develop$Mc_FailedFemoralApproach
+)
 
 
 # Lets check out external validation -------------------------------------
@@ -264,7 +229,7 @@ auc_df <- split(df_calplot_valid, ~ .imp) %>%
   bind_rows(.id = ".imp") 
 
 psfmi::pool_auc(auc_df$auc, sqrt(auc_df$var_auc), nimp = max(as.numeric(auc_df$.imp)))
-
+#as.numeric(pROC::auc(Mc_FailedFemoralApproach ~ lp_valid, data = df_calplot_valid))
 
 # Now go calibration plot
 
@@ -278,7 +243,7 @@ lp_grid <- qlogis(probs_grid)
 # What do we do? plot all calib plots in one figure, with flexible on entire stacked
 # ... as dark
 mod_cal_stacked <- glm(
-  formula = Mc_FailedFemoralApproach ~ ns(lp_valid, 4), 
+  formula = Mc_FailedFemoralApproach ~ ns(lp_valid, knots), 
   data = df_calplot_valid, 
   family = binomial()
 )
@@ -289,7 +254,7 @@ split(df_calplot_valid, ~ .imp) %>%
   map(
     .f = ~ {
       mod_cal <- glm(
-        formula = Mc_FailedFemoralApproach ~ ns(lp_valid, 4), 
+        formula = Mc_FailedFemoralApproach ~ ns(lp_valid, knots), 
         data = .x, 
         family = binomial()
       )
@@ -325,3 +290,19 @@ split(df_calplot_valid, ~ .imp) |>
   map(.f = ~ glm(Mc_FailedFemoralApproach ~ offset(lp_valid), family = binomial, data = .x)) |> 
   pool() |> 
   summary()
+
+
+# Check n imps
+
+## 11 minutes for 20 imps and niter = 20
+howManyImputations::how_many_imputations(
+  with(
+    tar_read(imps_assess),
+    glm(Mc_FailedFemoralApproach ~ M_age + M_prev_ht + AorticVariant + 
+          ArchElongation + AngleFollowingBifurcation + InnCca_nr_90orLarger + 
+          ICAE_NASCET_Degree, family = binomial())
+  ) |> 
+    pool()
+)
+
+plot(imps_assess,layout = c(2, 8))

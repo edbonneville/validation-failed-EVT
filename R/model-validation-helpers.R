@@ -126,8 +126,17 @@ assess_performance <- function(glmnet_model, # Already with a picked lambda
                                new_x,
                                new_y) {
   
+  print(coef(glmnet_model))
+  
   # Compute linear predictor
   lp <- drop(glmnet::predict.glmnet(glmnet_model, newx = new_x))
+  print(head(lp))
+  print(
+    head(
+      drop(as.numeric(coef(glmnet_model)) %*% t(cbind(1, new_x)))
+    )
+  )
+  print(head(new_x, 3))
   
   # Get performance measures from within glmnet (incl. AUC on stacked)
   general_performance <- glmnet::assess.glmnet(
@@ -180,6 +189,8 @@ validate_lasso_stackedImps <- function(imputations, # as returned by "long"
     new_y = y_orig
   )
   
+  print(apparent_perform)
+  
   # Bootstrap model frame to avoid calling model.matrix too many times
   prepped_dat <- cbind.data.frame(y_orig, ".id" = imputations[[".id"]], X_orig, wts_orig)
   colnames(prepped_dat)[which(colnames(prepped_dat) == c("y_orig", "wts_orig"))] <- c(response_var, wts)
@@ -196,7 +207,7 @@ validate_lasso_stackedImps <- function(imputations, # as returned by "long"
   bootstrap_valids <- furrr::future_map_dfr(
     .x = boot_dats,
     .id = "boot_num",
-    .options = furrr_options(seed = TRUE),
+    .options = furrr::furrr_options(seed = TRUE), #chunk_size = ceiling(B / 4)),
     .f = ~ {
       
       # Same business
@@ -256,6 +267,10 @@ validate_lasso_stackedImps <- function(imputations, # as returned by "long"
     mutate(across(where(is.numeric), ~ round(.x, digits = 3)))
   
   # Return both model and internal validation procedure
-  list_res <- list("model_fit" = mod_orig, "validation_summary" = results)
+  list_res <- list(
+    "model_fit" = mod_orig, 
+    "validation_summary" = results,
+    "validation_df" = bootstrap_valids
+  )
   return(list_res)
 }
