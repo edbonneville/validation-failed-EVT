@@ -1,0 +1,363 @@
+---
+title: "Article results"
+author: "E. F. Bonneville"
+date: "`r Sys.setenv(LANG = 'en_US.UTF-8'); format(Sys.Date(), '%d %B %Y')`"
+output: 
+  html_document:
+    df_print: kable
+    toc: yes
+    toc_float: 
+      smooth_scroll: false
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = here::here())
+knitr::opts_chunk$set(
+  echo = FALSE, 
+  out.width = "100%", 
+  warning = FALSE, 
+  message = FALSE
+)
+
+# Load libraries for knitting
+library(ggplot2)
+library(targets)
+library(tidyverse)
+library(tableone)
+
+# Source functions
+source("data-raw/prepare_raw_data.R")
+source("R/imputation-helpers.R")
+source("R/model-validation-helpers.R")
+
+# Set contrasts for ordered factors
+options(contrasts = rep("contr.treatment", 2))
+
+# Set global setting
+theme_set(theme_minimal(base_size = 14))
+```
+
+```{r objs}
+tar_load(
+  c(
+    dat_combined,
+    dat_to_impute,
+    imps_all,
+    candidate_predictors,
+    model_formula,
+    analysis_settings,
+    validation_dev_lambdamin
+  )
+)
+
+# For later use
+response_var <- all.vars(stats::update(model_formula, . ~ 1))
+```
+
+## Descriptives
+
+### Table 1
+
+For continous variables:
+
+```{r table-one-contin}
+# Gives you everything for tables 1 and 2 (warnings due to variables not in validation, ignore!)
+table_one <- dat_combined %>%  
+  select(-all_of(c("sidescored", "AngleCcaIca", "ICAEAtherosclerosis", "StudySubjectID"))) %>%
+  # Here we dichotomise purely for the table, does not affect original data
+  mutate(
+    ICA_nr_90orLarger_geq1 = factor(ifelse(ICA_nr_90orLarger >= 1, 1, 0)),
+    ICA_nr_90orLarger_geq2 = factor(ifelse(ICA_nr_90orLarger >= 2, 1, 0)),
+    ICAE_NASCET_99 = factor(ifelse(ICAE_NASCET_Degree < 99, 0,1)),
+    InnCca_90orLarger_geq1 = factor(ifelse(InnCca_nr_90orLarger >= 1, 1, 0)),
+    InnCca_90orLarger_geq2 = factor(ifelse(InnCca_nr_90orLarger >= 2, 1, 0)),
+    ICAI_stenosis50 = factor(ifelse(ICAIAtherosclerosis == "Yes, >=50% stenosis", 1, 0)),
+    AngleAaInn_OR_AaCca_dich45 = factor(ifelse(AngleAaInn_OR_AaCca > 45, 0, 1))
+  ) %>% 
+  CreateTableOne(data = ., strata = "dataset")
+
+# Summaries of all continuous variables
+kableone(table_one$ContTable, nonnormal = TRUE)
+```
+
+For categorical variables:
+
+```{r table-one-categ}
+# Summaries of all categorical variables
+kableone(table_one$CatTable)
+```
+
+### Missing data summaries 
+
+
+```{r miss-dat-summ}
+# Seperate datasets
+dat_develop <- subset(x = dat_to_impute, select = -dataset, subset = (dataset == "develop"))
+dat_valid <- subset(x = dat_to_impute, select = -dataset, subset = (dataset == "valid"))
+
+# Check proportion of complete cases in target analysis (quite good, compare results)
+mean(complete.cases(dat_develop[, c("Mc_FailedFemoralApproach", candidate_predictors)]))
+mean(complete.cases(dat_valid[, c("Mc_FailedFemoralApproach", candidate_predictors)]))
+mean(complete.cases(dat_to_impute[, c("Mc_FailedFemoralApproach", candidate_predictors)]))
+
+# Visualise missings beforehand
+naniar::gg_miss_var(dat_to_impute, facet = dataset, show_pct = TRUE)
+```
+
+(Naniar/JointAI summaries/VIM)
+
+## Univariable analyses
+
+```{r univar-analyses}
+univariate_analyses <- imps_all %>% 
+  
+  # Only use separately imputed develop, valid and combined cohorts
+  filter(imps_label != "imps_assess") %>% 
+  
+  # Split each of three cohorts, and run analyses on each
+  split(f = .$imps_label) %>% 
+  map(.f = ~ {
+    imps_univariate_ORs(
+      outcome = "Mc_FailedFemoralApproach", 
+      imps = split(.x, .x$.imp),
+      predictors = c(
+        candidate_predictors, 
+        "ICA_nr_90orLarger",
+        "OrigoStenosis50percent",
+        "ICAIAtherosclerosis",
+        "AngleAaInn_OR_AaCca"
+      )
+    )
+  }) %>% 
+  bind_rows(.id = "cohort") 
+
+# Make the table
+univariate_table <- univariate_analyses %>% 
+  select(cohort, term, estimate, `2.5 %`, `97.5 %`) %>%
+  mutate(across(where(is.numeric), ~ round(.x, 2))) %>% 
+  mutate(
+    OR = paste0(estimate, " [", `2.5 %`, "-", `97.5 %`, "]"),
+    cohort = factor(
+      cohort, 
+      levels = c("imps_dev", "imps_valid", "imps_combined"),
+      labels = c("develop_cohort", "validation_cohort", "combined_cohort")
+    )
+  ) %>% 
+  
+  # Spread and set column order
+  pivot_wider(names_from = cohort, values_from = OR, id_cols = term) %>% 
+  select(term, develop_cohort, validation_cohort, combined_cohort)
+
+knitr::kable(univariate_table)
+```
+
+### Interaction analyses
+
+```{r inters-univar}
+# Cohort interactions (Should probably be ommitted from manuscript)
+dat_interactions <- imps_all %>% 
+  filter(imps_label %in% c("imps_dev", "imps_valid"))
+
+interactions_table <- imps_univariate_ORs(
+  outcome = "Mc_FailedFemoralApproach",
+  imps = split(x = dat_interactions, f = dat_interactions$.imp),
+  predictors = paste0(candidate_predictors, " * imps_label") # imp_label is surrogate for cohort
+) %>% 
+  
+  # Keep only interaction terms - keep  p-values
+  filter(grepl(x = term, pattern = "\\:")) %>% 
+  select(term, p.value)
+
+knitr::kable(interactions_table)
+```
+
+## Internal validation development set
+
+```{r dev-coefs}
+# Development imputation
+imps_develop <- imps_all %>% 
+  filter(imps_label == "imps_assess" & dataset == "develop")
+
+# Development model
+mod_develop <- validation_dev_lambdamin$model_fit
+mod_coefs <- as.matrix(coef(mod_develop))
+colnames(mod_coefs) <- "Coefficients"
+
+knitr::kable(data.frame(mod_coefs))
+```
+
+```{r valid-dev}
+# Optimism correctedL
+validation_dev_lambdamin$validation_summary %>% 
+  filter(measure %in% c("auc", "intercept", "slope")) %>% 
+  group_by(measure) %>% 
+  summarise(value = paste0(corrected, " [", lower_corrected, ";", upper_corrected, "]")) %>%
+  knitr::kable()
+```
+
+```{r dev-calib}
+X_dev <- subset(x = stats::model.matrix(model_formula, data = imps_develop), select = -`(Intercept)`)
+y_dev <- imps_develop[[response_var]]
+lp_dev <- drop(predict(mod_develop, newx = X_dev, type = "link")) # linear predictor
+
+# Make df for calibration
+df_calplot_develop <- cbind.data.frame(lp_dev, imps_develop)
+
+# We use restricted cubic splines with 4 knots
+knots <- 4
+
+# Get limits of predicted probabilities across all imputed datasets
+pred_probs <- plogis(df_calplot_develop$lp_dev) 
+probs_grid <- seq(min(pred_probs), max(pred_probs), by = 0.005)
+lp_grid <- qlogis(probs_grid)
+
+# The "average" smooth calibration is simply the one fitted on stacked data
+mod_cal_stacked <- glm(
+  formula = Mc_FailedFemoralApproach ~ ns(lp_dev, knots), 
+  data = df_calplot_develop, 
+  family = binomial()
+)
+
+# No easy way to create CI for this, so we visualise all the calibration curves
+# in each imputed dataset:
+split(df_calplot_develop, ~ .imp) %>%
+  map(
+    .f = ~ {
+      mod_cal <- glm(
+        formula = Mc_FailedFemoralApproach ~ ns(lp_dev, knots), 
+        data = .x, 
+        family = binomial()
+      )
+      data.frame(
+        "predicted" = probs_grid,
+        "observed" = predict(mod_cal, newdata = data.frame("lp_dev" = lp_grid), type = "response"),
+        row.names = NULL
+      )
+    }
+  ) %>%
+  bind_rows(.id = ".imp") %>%
+  ggplot() +
+  geom_line(aes(group = .imp, x = predicted, y = observed), alpha = 0.8, col = "lightgray", size = 1) +
+  theme(panel.grid.major = element_blank()) + 
+  geom_line(
+    data = cbind.data.frame(
+      "predicted" = probs_grid,
+      "observed" = predict(
+        mod_cal_stacked, 
+        newdata = data.frame("lp_dev" = lp_grid), 
+        type = "response"
+      ) #- 0.25
+    ),
+    aes(x = predicted, y = observed),
+    size = 2
+  ) +
+  geom_abline(intercept = 0, slope = 1, col = "red", size = 1, linetype = "dashed") #+
+  geom_histogram(
+    data = df_calplot_develop, 
+    aes(x = plogis(lp_dev), 
+        y = stat(
+          0.25 * count / max(count)
+        )#0.5 * (..count../sum(..count..))
+      ),
+    fill = "lightblue",
+    bins = 100
+  )
+
+# Work this later..
+
+# Add hists of pred probs/annotation of AUC, slope and int?
+df_calplot_develop |> 
+  ggplot(aes(plogis(lp_dev))) +
+  geom_histogram()
+```
+
+## External validation
+
+```{r ext-validation}
+imps_valid <- imps_all %>% 
+  filter(imps_label == "imps_assess" & dataset == "valid")
+
+X_valid <- subset(x = stats::model.matrix(model_formula, data = imps_valid), select = -`(Intercept)`)
+y_valid <- imps_valid[[response_var]]
+
+# Compute linear predictor
+lp_valid <- drop(predict(mod_develop, newx = X_valid))
+df_calplot_valid <- cbind.data.frame(lp_valid, imps_valid)
+
+# Pool AUC
+auc_df <- split(df_calplot_valid, ~ .imp) %>%
+  map(.f = ~ {
+    auc_obj <- pROC::auc(Mc_FailedFemoralApproach ~ lp_valid, data = .x)
+    cbind.data.frame("auc" = as.numeric(auc_obj), "var_auc" = pROC::var(auc_obj))
+  }) %>%
+  bind_rows(.id = ".imp") 
+
+psfmi::pool_auc(auc_df$auc, sqrt(auc_df$var_auc), nimp = max(as.numeric(auc_df$.imp)))
+
+# Get cal slope and intercept
+split(df_calplot_valid, ~ .imp) |> 
+  map(.f = ~ glm(Mc_FailedFemoralApproach ~ lp_valid, family = binomial, data = .x)) |> 
+  pool() |> 
+  summary()
+
+split(df_calplot_valid, ~ .imp) |> 
+  map(.f = ~ glm(Mc_FailedFemoralApproach ~ offset(lp_valid), family = binomial, data = .x)) |> 
+  pool() |> 
+  summary()
+
+#
+pred_probs <- plogis(df_calplot_valid$lp_valid)
+probs_grid <- seq(min(pred_probs), max(pred_probs), by = 0.01)
+lp_grid <- qlogis(probs_grid)
+
+mod_cal_stacked_valid <- glm(
+  formula = Mc_FailedFemoralApproach ~ ns(lp_valid, knots), 
+  data = df_calplot_valid, 
+  family = binomial()
+)
+
+# Now calplot
+split(df_calplot_valid, ~ .imp) %>%
+  map(
+    .f = ~ {
+      mod_cal <- glm(
+        formula = Mc_FailedFemoralApproach ~ ns(lp_valid, knots), 
+        data = .x, 
+        family = binomial()
+      )
+      data.frame(
+        "predicted" = probs_grid,
+        "observed" = predict(mod_cal, newdata = data.frame("lp_valid" = lp_grid), type = "response"),
+        row.names = NULL
+      )
+    }
+  ) %>%
+  bind_rows(.id = ".imp") %>%
+  ggplot() +
+  geom_line(aes(group = .imp, x = predicted, y = observed), alpha = 0.8, col = "lightgray", size = 1) +
+  theme(panel.grid.major = element_blank()) + 
+  geom_line(
+    data = cbind.data.frame(
+      "predicted" = probs_grid,
+      "observed" = predict(
+        mod_cal_stacked_valid, 
+        newdata = data.frame("lp_valid" = lp_grid), 
+        type = "response"
+      )
+    ),
+    aes(x = predicted, y = observed),
+    size = 2
+  ) +
+  geom_abline(intercept = 0, slope = 1, col = "red", size = 1, linetype = "dashed") +
+  lims(x = c(0, 0.8), y = c(0, 0.8))
+```
+
+## Updating to combined cohort
+
+```{r combined-validation}
+
+```
+
+### Nomogram

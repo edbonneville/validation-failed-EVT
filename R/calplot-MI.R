@@ -2,12 +2,12 @@ tar_load(
   c(
     imps_all,
     candidate_predictors,
-    validation_dev_min,
+    validation_dev_lambdamin,
     model_formula
   )
 )
 
-model <- validation_dev_min$model_fit
+model <- validation_dev_lambdamin$model_fit
 imps_long <- imps_all %>% 
   filter(imps_label == "imps_assess" & dataset == "develop")
 
@@ -34,6 +34,16 @@ calplot_MI <- function(imps_long,
   pred_probs <- plogis(df_calplot$lp) 
   probs_grid <- seq(min(pred_probs), max(pred_probs), by = 0.005)
   lp_grid <- qlogis(probs_grid)
+  
+  # Plot deciles predicted risks
+  risk_deciles <- quantile(pred_probs, probs = seq(0, 1, by = 0.1))
+  risk_groups <- cut(pred_probs, breaks = risk_deciles, include.lowest = T)
+  
+  # This is wrong!!
+  risk_pts <- cbind.data.frame(
+    "predicted" = tapply(pred_probs, risk_groups, function(x) mean(x, na.rm = TRUE)),
+    "observed" = tapply(as.numeric(y) - 1L, risk_groups, function(x) mean(x, na.rm = TRUE))
+  )
   
   # The "average" smooth calibration is simply the one fitted on stacked data
   smooth_form <- reformulate(response = response_var, termlabels = paste0("splines::ns(lp, ", knots, ")"))
@@ -70,7 +80,8 @@ calplot_MI <- function(imps_long,
       aes(x = predicted, y = observed),
       size = 2
     ) +
-    geom_abline(intercept = 0 - startpos_hist, slope = 1, col = "red", size = 1, linetype = "dashed") +
+    geom_abline(intercept = 0 - startpos_hist,
+                slope = 1, col = "red", size = 1, linetype = "dashed") +
     geom_histogram(
       data = data.frame("predicted" = plogis(df_calplot$lp)),
       aes(x = predicted, y = stat(height_hist * count / max(count))),
@@ -86,14 +97,41 @@ calplot_MI <- function(imps_long,
       ylim = c(ylim[1] - startpos_hist, ylim[2] - startpos_hist),
     )
   
-  return(p)
+  p +
+    geom_point(
+      data = risk_pts,
+      aes(predicted, observed - startpos_hist),
+      size = 2.5,
+      col = "blue", 
+      shape = 2
+    )
+  
+  #. Plot also deciles/quintiles of predicted/observed as in val.prob.ci2?
+  
+  #return(p)
 }
 
 # See https://stackoverflow.com/questions/35324892/ggplot2-setting-geom-bar-baseline-to-1-instead-of-zero
 calplot_MI(
   imps_long = imps_all %>% 
     filter(imps_label == "imps_assess" & dataset == "develop"),
-  model = validation_dev_min$model_fit,
+  model = validation_dev_lambdamin$model_fit,
+  impdat_ind = ".imp",
+  model_formula = model_formula,
+  height_hist = 0.2,
+  startpos_hist = -0.25,
+  knots = 5,
+  n_bins = 100,
+  xlim = c(0, 0.85),
+  ylim = c(-0.25, 1)
+) +
+  theme_minimal()
+
+
+calplot_MI(
+  imps_long = imps_all %>% 
+    filter(imps_label == "imps_assess" & dataset == "valid"),
+  model = validation_dev_lambdamin$model_fit,
   impdat_ind = ".imp",
   model_formula = model_formula,
   height_hist = 0.2,
@@ -102,4 +140,5 @@ calplot_MI(
   n_bins = 100,
   xlim = c(0, 0.85),
   ylim = c(-0.25, 1)
-)
+) +
+  theme_minimal()

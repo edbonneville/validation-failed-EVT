@@ -49,6 +49,7 @@ run_imputations <- function(dat_to_impute,
   
   # For ordered covariates to be safe (not sure if Targets passes this on)
   options(contrasts = rep("contr.treatment", 2))
+  type <- match.arg(type)
   
   # Read-in valid and develop separately
   dat_develop <- subset(x = dat_to_impute, select = -dataset, subset = (dataset == "develop"))

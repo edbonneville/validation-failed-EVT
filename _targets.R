@@ -27,7 +27,8 @@ tar_option_set(packages = project_pkgs, error = "continue")
 # Uncomment if running scripts interactively:
 # sapply(project_pkgs, function(pkg) require(pkg, character.only = TRUE)); rm(project_pkgs)
 
-list(plan(callr), plan(callr))# nest for furrr part
+# See https://github.com/ropensci/targets/discussions/359
+plan(list(tweak(callr, workers = 3), tweak(callr, workers = 2)))
 
 
 # Analysis pipeline -------------------------------------------------------
@@ -114,38 +115,27 @@ targets_list <- list(
   ),
   # # Internal validation development set
   tar_target(
-    validation_dev_min,
+    validation_dev_lambdamin,
     validate_lasso_stackedImps(
       imputations = imps_all %>% filter(imps_label == "imps_assess" & dataset == "develop"),
       formula = model_formula,
       wts = "wts",
       n_folds = analysis_settings$n_folds,
-      lambda_choice = "min", #"1se", # crazy results with 1se
-      B = 10 #analysis_settings$B
+      lambda_choice = "min", #"1se" crazy results with 1se, skip
+      B = analysis_settings$B
     )
   ),
   tar_target(
-    validation_dev_1se,
+    validation_comb_lambdamin,
     validate_lasso_stackedImps(
-      imputations = imps_all %>% filter(imps_label == "imps_assess" & dataset == "develop"),
+      imputations = imps_all %>% filter(imps_label == "imps_combined"),
       formula = model_formula,
       wts = "wts",
       n_folds = analysis_settings$n_folds,
-      lambda_choice = "1se", #"1se", # crazy results with 1se
-      B = 10 #analysis_settings$B
+      lambda_choice = "min",
+      B = analysis_settings$B
     )
-  )#,
-  # tar_target(
-  #   fit_validation_combined,
-  #   validate_lasso_stackedImps(
-  #     imputations = imps_all %>% filter(imps_label == "imps_combined"),
-  #     formula = model_formula,
-  #     wts = "wts",
-  #     n_folds = analysis_settings$n_folds,
-  #     lambda_choice = "min",
-  #     B = analysis_settings$B
-  #   )
-  # )
+  )
   # 
   #tarchetypes::tar_render(analysis_summary, path = "analysis/2020-09_analysis-summary.Rmd")
 )
