@@ -31,6 +31,7 @@ library(tableone)
 source("data-raw/prepare_raw_data.R")
 source("R/imputation-helpers.R")
 source("R/model-validation-helpers.R")
+source("R/calplot-MI.R")
 
 # Set contrasts for ordered factors
 options(contrasts = rep("contr.treatment", 2))
@@ -48,7 +49,8 @@ tar_load(
     candidate_predictors,
     model_formula,
     analysis_settings,
-    validation_dev_lambdamin
+    validation_dev_lambdamin,
+    validation_comb_lambdamin
   )
 )
 
@@ -198,79 +200,20 @@ validation_dev_lambdamin$validation_summary %>%
 ```
 
 ```{r dev-calib}
-X_dev <- subset(x = stats::model.matrix(model_formula, data = imps_develop), select = -`(Intercept)`)
-y_dev <- imps_develop[[response_var]]
-lp_dev <- drop(predict(mod_develop, newx = X_dev, type = "link")) # linear predictor
-
-# Make df for calibration
-df_calplot_develop <- cbind.data.frame(lp_dev, imps_develop)
-
-# We use restricted cubic splines with 4 knots
-knots <- 4
-
-# Get limits of predicted probabilities across all imputed datasets
-pred_probs <- plogis(df_calplot_develop$lp_dev) 
-probs_grid <- seq(min(pred_probs), max(pred_probs), by = 0.005)
-lp_grid <- qlogis(probs_grid)
-
-# The "average" smooth calibration is simply the one fitted on stacked data
-mod_cal_stacked <- glm(
-  formula = Mc_FailedFemoralApproach ~ ns(lp_dev, knots), 
-  data = df_calplot_develop, 
-  family = binomial()
-)
-
-# No easy way to create CI for this, so we visualise all the calibration curves
-# in each imputed dataset:
-split(df_calplot_develop, ~ .imp) %>%
-  map(
-    .f = ~ {
-      mod_cal <- glm(
-        formula = Mc_FailedFemoralApproach ~ ns(lp_dev, knots), 
-        data = .x, 
-        family = binomial()
-      )
-      data.frame(
-        "predicted" = probs_grid,
-        "observed" = predict(mod_cal, newdata = data.frame("lp_dev" = lp_grid), type = "response"),
-        row.names = NULL
-      )
-    }
-  ) %>%
-  bind_rows(.id = ".imp") %>%
-  ggplot() +
-  geom_line(aes(group = .imp, x = predicted, y = observed), alpha = 0.8, col = "lightgray", size = 1) +
-  theme(panel.grid.major = element_blank()) + 
-  geom_line(
-    data = cbind.data.frame(
-      "predicted" = probs_grid,
-      "observed" = predict(
-        mod_cal_stacked, 
-        newdata = data.frame("lp_dev" = lp_grid), 
-        type = "response"
-      ) #- 0.25
-    ),
-    aes(x = predicted, y = observed),
-    size = 2
-  ) +
-  geom_abline(intercept = 0, slope = 1, col = "red", size = 1, linetype = "dashed") #+
-  geom_histogram(
-    data = df_calplot_develop, 
-    aes(x = plogis(lp_dev), 
-        y = stat(
-          0.25 * count / max(count)
-        )#0.5 * (..count../sum(..count..))
-      ),
-    fill = "lightblue",
-    bins = 100
-  )
-
-# Work this later..
-
-# Add hists of pred probs/annotation of AUC, slope and int?
-df_calplot_develop |> 
-  ggplot(aes(plogis(lp_dev))) +
-  geom_histogram()
+calplot_MI(
+  imps_long = imps_all %>% 
+    filter(imps_label == "imps_assess" & dataset == "develop"),
+  model = validation_dev_lambdamin$model_fit,
+  impdat_ind = ".imp",
+  model_formula = model_formula,
+  height_hist = 0.2,
+  startpos_hist = -0.25,
+  knots = 5,
+  n_bins = 100,
+  xlim = c(0, 0.85),
+  ylim = c(-0.25, 1)
+) +
+  theme_minimal()
 ```
 
 ## External validation
@@ -280,7 +223,6 @@ imps_valid <- imps_all %>%
   filter(imps_label == "imps_assess" & dataset == "valid")
 
 X_valid <- subset(x = stats::model.matrix(model_formula, data = imps_valid), select = -`(Intercept)`)
-y_valid <- imps_valid[[response_var]]
 
 # Compute linear predictor
 lp_valid <- drop(predict(mod_develop, newx = X_valid))
@@ -307,57 +249,118 @@ split(df_calplot_valid, ~ .imp) |>
   pool() |> 
   summary()
 
-#
-pred_probs <- plogis(df_calplot_valid$lp_valid)
-probs_grid <- seq(min(pred_probs), max(pred_probs), by = 0.01)
-lp_grid <- qlogis(probs_grid)
+calplot_MI(
+  imps_long = imps_valid,
+  model = validation_dev_lambdamin$model_fit,
+  impdat_ind = ".imp",
+  model_formula = model_formula,
+  height_hist = 0.2,
+  startpos_hist = -0.25,
+  knots = 5,
+  n_bins = 200,
+  xlim = c(0, 0.85),
+  ylim = c(-0.25, 1)
+) +
+  theme_minimal()
+```
 
-mod_cal_stacked_valid <- glm(
-  formula = Mc_FailedFemoralApproach ~ ns(lp_valid, knots), 
-  data = df_calplot_valid, 
-  family = binomial()
+
+Try intermediate updating with logreg recalibration
+
+```{r updating}
+mod_coefs
+log_recal <- glm(imps_valid$Mc_FailedFemoralApproach ~ lp_valid, family = binomial())
+coef(log_recal)
+
+news_coefs <- c(coef(log_recal)[[1]], coef(log_recal)[[2]] * drop(mod_coefs)[-1])
+new_lp <- drop((news_coefs) %*% t(cbind(1, X_valid)))
+
+df_calplot <- cbind.data.frame("lp" = new_lp, imps_valid)
+knots <- 4
+smooth_form <- reformulate(response = response_var, termlabels = paste0("splines::ns(lp, ", knots, ")"))
+mod_cal_stacked <- glm(formula = smooth_form, data = df_calplot, family = binomial())
+stacked_df <- data.frame(
+    "predicted" = unique(plogis(new_lp)),
+    "observed" = predict(mod_cal_stacked, 
+                         newdata = data.frame("lp" = unique(plogis(new_lp))), 
+                         type = "response")
 )
-
-# Now calplot
-split(df_calplot_valid, ~ .imp) %>%
-  map(
-    .f = ~ {
-      mod_cal <- glm(
-        formula = Mc_FailedFemoralApproach ~ ns(lp_valid, knots), 
-        data = .x, 
-        family = binomial()
-      )
-      data.frame(
-        "predicted" = probs_grid,
-        "observed" = predict(mod_cal, newdata = data.frame("lp_valid" = lp_grid), type = "response"),
-        row.names = NULL
-      )
-    }
-  ) %>%
-  bind_rows(.id = ".imp") %>%
-  ggplot() +
-  geom_line(aes(group = .imp, x = predicted, y = observed), alpha = 0.8, col = "lightgray", size = 1) +
-  theme(panel.grid.major = element_blank()) + 
-  geom_line(
-    data = cbind.data.frame(
-      "predicted" = probs_grid,
-      "observed" = predict(
-        mod_cal_stacked_valid, 
-        newdata = data.frame("lp_valid" = lp_grid), 
-        type = "response"
-      )
-    ),
-    aes(x = predicted, y = observed),
-    size = 2
-  ) +
-  geom_abline(intercept = 0, slope = 1, col = "red", size = 1, linetype = "dashed") +
-  lims(x = c(0, 0.8), y = c(0, 0.8))
+plot(stacked_df$predicted, stacked_df$observed)
 ```
 
 ## Updating to combined cohort
 
 ```{r combined-validation}
+imps_combined <- imps_all %>% 
+  filter(imps_label == "imps_combined")
 
+mod_combined <- validation_comb_lambdamin$model_fit
+validation_comb_lambdamin$model_fit$lambda
+
+validation_comb_lambdamin$validation_summary
+validation_comb_lambdamin$validation_df |> 
+  ggplot(aes(x = corrected)) +
+  geom_histogram(bins = 50) +
+  facet_wrap(~ measure, scales = "free")
+
+validation_comb_lambdamin$validation_df |> 
+  group_by(boot_num) |> 
+  summarise(pen = mean(penalty)) |>
+  #pull(pen) |>  mean()
+  ggplot(aes(pen)) +
+  geom_histogram()
+
+calplot_MI(
+  imps_long = imps_combined,
+  model = validation_comb_lambdamin$model_fit,
+  impdat_ind = ".imp",
+  model_formula = model_formula,
+  height_hist = 0.2,
+  startpos_hist = -0.25,
+  knots = 5,
+  n_bins = 200,
+  xlim = c(0, 0.5),
+  ylim = c(-0.25, 0.8)
+) +
+  theme_minimal()
+
+
+# Try the 1se on combined:
+imputations <- imps_combined
+formula <- model_formula
+n_folds = 10
+wts <- "wts"
+lambda_choice <- "1se"
+
+response_var <- all.vars(stats::update(formula, . ~ 1))
+  X_orig <- subset(x = stats::model.matrix(formula, data = imputations), select = -`(Intercept)`)
+  y_orig <- imputations[[response_var]]
+  wts_orig <- imputations[[wts]]
+  
+  # First apparent performance
+  folds <- assign_crossval_folds(y = unique(imputations[[".id"]]), n_folds = n_folds)
+  mod_orig <- run_lasso_glmnet(
+    x = X_orig,
+    y = y_orig,
+    wts = wts_orig,
+    foldid = folds[match(imputations[[".id"]], folds[["y"]]), "fold"],
+    lambda_choice = lambda_choice
+  )
+
+mod_orig$lambda
+calplot_MI(
+  imps_long = imps_combined,
+  model = mod_orig,
+  impdat_ind = ".imp",
+  model_formula = model_formula,
+  height_hist = 0.2,
+  startpos_hist = -0.25,
+  knots = 3,
+  n_bins = 200,
+  xlim = c(0, 0.5),
+  ylim = c(-0.25, 0.8)
+) +
+  theme_minimal() 
 ```
 
 ### Nomogram

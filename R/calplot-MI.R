@@ -1,16 +1,3 @@
-tar_load(
-  c(
-    imps_all,
-    candidate_predictors,
-    validation_dev_lambdamin,
-    model_formula
-  )
-)
-
-model <- validation_dev_lambdamin$model_fit
-imps_long <- imps_all %>% 
-  filter(imps_label == "imps_assess" & dataset == "develop")
-
 calplot_MI <- function(imps_long,
                        impdat_ind = ".imp",
                        model,
@@ -112,33 +99,4 @@ calplot_MI <- function(imps_long,
 }
 
 # See https://stackoverflow.com/questions/35324892/ggplot2-setting-geom-bar-baseline-to-1-instead-of-zero
-calplot_MI(
-  imps_long = imps_all %>% 
-    filter(imps_label == "imps_assess" & dataset == "develop"),
-  model = validation_dev_lambdamin$model_fit,
-  impdat_ind = ".imp",
-  model_formula = model_formula,
-  height_hist = 0.2,
-  startpos_hist = -0.25,
-  knots = 5,
-  n_bins = 100,
-  xlim = c(0, 0.85),
-  ylim = c(-0.25, 1)
-) +
-  theme_minimal()
 
-
-calplot_MI(
-  imps_long = imps_all %>% 
-    filter(imps_label == "imps_assess" & dataset == "valid"),
-  model = validation_dev_lambdamin$model_fit,
-  impdat_ind = ".imp",
-  model_formula = model_formula,
-  height_hist = 0.2,
-  startpos_hist = -0.25,
-  knots = 4,
-  n_bins = 100,
-  xlim = c(0, 0.85),
-  ylim = c(-0.25, 1)
-) +
-  theme_minimal()

@@ -28,7 +28,7 @@ tar_option_set(packages = project_pkgs, error = "continue")
 # sapply(project_pkgs, function(pkg) require(pkg, character.only = TRUE)); rm(project_pkgs)
 
 # See https://github.com/ropensci/targets/discussions/359
-plan(list(tweak(callr, workers = 3), tweak(callr, workers = 2)))
+plan(list(tweak(callr, workers = 1), tweak(callr, workers = 3)))
 
 
 # Analysis pipeline -------------------------------------------------------
