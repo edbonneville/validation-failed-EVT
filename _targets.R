@@ -28,8 +28,8 @@ tar_option_set(packages = project_pkgs, error = "continue")
 # sapply(project_pkgs, function(pkg) require(pkg, character.only = TRUE)); rm(project_pkgs)
 
 # See https://github.com/ropensci/targets/discussions/359
-plan(list(tweak(callr, workers = 1), tweak(callr, workers = 3)))
-
+#plan(list(tweak(callr, workers = 1), tweak(callr, workers = 3)))
+plan(callr)
 
 # Analysis pipeline -------------------------------------------------------
 
@@ -67,11 +67,9 @@ targets_list <- list(
   # -- Part 2: imputations
   
   # We pick the number of imputations and specify our candidate predictors
-  # such that we can directly add the weights for the stacked LASSO
-  tar_target(
-    analysis_settings, 
-    list("m" = 50L, "n_cycles" = 15L, "B" = 200L, "n_folds" = 10L)
-  ),
+  # such that we can directly add the weights for the stacked ridge
+  tar_target(validation_settings, list("B" = 3L, "n_folds" = 10L)), # change back to B = 200L
+  tar_target(imp_settings, list("m" = 50L, "n_cycles" = 15L)),
   tar_target(
     candidate_predictors, c(
       "M_age",
@@ -85,14 +83,14 @@ targets_list <- list(
   ),
   tar_target(
     dat_to_impute, 
-    add_stacked_weights(dat_combined, candidate_predictors, analysis_settings)
+    add_stacked_weights(dat_combined, candidate_predictors, imp_settings)
   ),
   
   # All rounds of imputations here:
-  tar_target(imps_dev, run_imputations(dat_to_impute, analysis_settings, type = "develop")),
-  tar_target(imps_valid, run_imputations(dat_to_impute, analysis_settings, type = "valid")),
-  tar_target(imps_assess, run_imputations(dat_to_impute, analysis_settings, type = "model")),
-  tar_target(imps_combined, run_imputations(dat_to_impute, analysis_settings, type = "combined")),
+  tar_target(imps_dev, run_imputations(dat_to_impute, imp_settings, type = "develop")),
+  tar_target(imps_valid, run_imputations(dat_to_impute, imp_settings, type = "valid")),
+  tar_target(imps_assess, run_imputations(dat_to_impute, imp_settings, type = "model")),
+  tar_target(imps_combined, run_imputations(dat_to_impute, imp_settings, type = "combined")),
   
   # Combine all imputed datasets in one big df
   tar_target(
@@ -116,24 +114,24 @@ targets_list <- list(
   # # Internal validation development set
   tar_target(
     validation_dev_lambdamin,
-    validate_lasso_stackedImps(
+    validate_stackedImps(
       imputations = imps_all %>% filter(imps_label == "imps_assess" & dataset == "develop"),
       formula = model_formula,
       wts = "wts",
-      n_folds = analysis_settings$n_folds,
+      n_folds = validation_settings$n_folds,
       lambda_choice = "min", #"1se" crazy results with 1se, skip
-      B = analysis_settings$B
+      B = validation_settings$B
     )
   ),
   tar_target(
     validation_comb_lambdamin,
-    validate_lasso_stackedImps(
+    validate_stackedImps(
       imputations = imps_all %>% filter(imps_label == "imps_combined"),
       formula = model_formula,
       wts = "wts",
-      n_folds = analysis_settings$n_folds,
+      n_folds = validation_settings$n_folds,
       lambda_choice = "min",
-      B = analysis_settings$B
+      B = validation_settings$B
     )
   )
   # 

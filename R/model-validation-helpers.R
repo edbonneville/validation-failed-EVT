@@ -73,13 +73,14 @@ imps_univariate_ORs <- function(outcome,
 
 
 # Add alpha = 1 to args..
-run_lasso_glmnet <- function(x,
-                             y,
-                             foldid = NULL,
-                             family = "binomial",
-                             lambda_choice = c("min", "1se"),
-                             wts = NULL,
-                             ...) {
+run_stacked_glmnet <- function(x,
+                               y,
+                               foldid = NULL,
+                               family = "binomial",
+                               lambda_choice = c("min", "1se"),
+                               alpha = 0, # ridge
+                               wts = NULL,
+                               ...) {
   
   # Get lambda choice
   lambda_choice <- match.arg(lambda_choice)
@@ -91,6 +92,7 @@ run_lasso_glmnet <- function(x,
     weights = wts,
     foldid = foldid,
     family = family,
+    alpha = alpha,
     ...
   )
   
@@ -104,6 +106,7 @@ run_lasso_glmnet <- function(x,
     weights = wts,
     family = family,
     lambda = lambda,
+    alpha = alpha,
     intercept = TRUE
   )
   
@@ -148,12 +151,13 @@ assess_performance <- function(glmnet_model, # Already with a picked lambda
 }
 
 
-validate_lasso_stackedImps <- function(imputations, # as returned by "long"
-                                       formula,
-                                       wts, # var_name with weights
-                                       n_folds = 10,
-                                       lambda_choice = c("min", "1se"),
-                                       B = 5) {
+validate_stackedImps <- function(imputations, # as returned by "long"
+                                 formula,
+                                 wts, # var_name with weights
+                                 n_folds = 10,
+                                 lambda_choice = c("min", "1se"),
+                                 alpha = 0, # ridge
+                                 B = 5) {
   
   # For ordered covariates to be safe (not sure if Targets passes this on)
   options(contrasts = rep("contr.treatment", 2))
@@ -169,12 +173,13 @@ validate_lasso_stackedImps <- function(imputations, # as returned by "long"
   
   # First apparent performance
   folds <- assign_crossval_folds(y = unique(imputations[[".id"]]), n_folds = n_folds)
-  mod_orig <- run_lasso_glmnet(
+  mod_orig <- run_stacked_glmnet(
     x = X_orig,
     y = y_orig,
     wts = wts_orig,
     foldid = folds[match(imputations[[".id"]], folds[["y"]]), "fold"],
-    lambda_choice = lambda_choice
+    lambda_choice = lambda_choice,
+    alpha = alpha
   )
   
   apparent_perform <- assess_performance(
@@ -208,12 +213,13 @@ validate_lasso_stackedImps <- function(imputations, # as returned by "long"
       folds_boot <- assign_crossval_folds(y = unique(.x[[".id_boot"]]), n_folds = n_folds)
       X_boot <- as.matrix(.x[, setdiff(colnames(.x), c(".id_boot", ".id", response_var, wts))])
       
-      mod_boot <- run_lasso_glmnet(
+      mod_boot <- run_stacked_glmnet(
         x = X_boot,
         y = y_boot,
         wts = wts_boot,
         foldid = folds_boot[match(.x[[".id_boot"]], folds_boot[["y"]]), "fold"],
-        lambda_choice = lambda_choice
+        lambda_choice = lambda_choice,
+        alpha = alpha
       )
       
       training_perform <- assess_performance(

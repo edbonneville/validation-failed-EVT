@@ -241,12 +241,12 @@ psfmi::pool_auc(auc_df$auc, sqrt(auc_df$var_auc), nimp = max(as.numeric(auc_df$.
 # Get cal slope and intercept
 split(df_calplot_valid, ~ .imp) |> 
   map(.f = ~ glm(Mc_FailedFemoralApproach ~ lp_valid, family = binomial, data = .x)) |> 
-  pool() |> 
+  mice::pool() |> 
   summary()
 
 split(df_calplot_valid, ~ .imp) |> 
   map(.f = ~ glm(Mc_FailedFemoralApproach ~ offset(lp_valid), family = binomial, data = .x)) |> 
-  pool() |> 
+  mice::pool() |> 
   summary()
 
 calplot_MI(
@@ -296,6 +296,7 @@ imps_combined <- imps_all %>%
 
 mod_combined <- validation_comb_lambdamin$model_fit
 validation_comb_lambdamin$model_fit$lambda
+mod_combined$beta
 
 validation_comb_lambdamin$validation_summary
 validation_comb_lambdamin$validation_df |> 
@@ -319,7 +320,7 @@ calplot_MI(
   startpos_hist = -0.25,
   knots = 5,
   n_bins = 200,
-  xlim = c(0, 0.5),
+  xlim = c(0, 0.55),
   ylim = c(-0.25, 0.8)
 ) +
   theme_minimal()
@@ -337,30 +338,57 @@ response_var <- all.vars(stats::update(formula, . ~ 1))
   y_orig <- imputations[[response_var]]
   wts_orig <- imputations[[wts]]
   
-  # First apparent performance
   folds <- assign_crossval_folds(y = unique(imputations[[".id"]]), n_folds = n_folds)
-  mod_orig <- run_lasso_glmnet(
+cross_val <- glmnet::cv.glmnet(
     x = X_orig,
     y = y_orig,
-    wts = wts_orig,
+    weights = wts_orig,
     foldid = folds[match(imputations[[".id"]], folds[["y"]]), "fold"],
-    lambda_choice = lambda_choice
+    family = "binomial", 
+    alpha = 0
   )
 
-mod_orig$lambda
+plot(cross_val)
+  
+  
+  
+  # First apparent performance - no penalty..
+mod <-glmnet::glmnet(
+    x = X_orig,
+    y = y_orig,
+    weights = wts_orig,
+    family = "binomial",
+    #lambda = 0, # unpenalized
+    lambda = cross_val$lambda.min,
+    alpha = 0, #ridge
+    intercept = TRUE
+  )
+
+hist(plogis(predict(mod, newx = X_orig)))
+max(plogis(predict(mod, newx = X_orig)))
+coef(mod)
+coef(
+  glm(model_formula, data = imps_combined, family = binomial())
+)
 calplot_MI(
   imps_long = imps_combined,
-  model = mod_orig,
+  model = mod,
   impdat_ind = ".imp",
   model_formula = model_formula,
   height_hist = 0.2,
   startpos_hist = -0.25,
-  knots = 3,
+  knots = 5,
   n_bins = 200,
-  xlim = c(0, 0.5),
-  ylim = c(-0.25, 0.8)
+  xlim = c(0, 1),
+  ylim = c(-0.25, 1)
 ) +
-  theme_minimal() 
+  theme_minimal()
+
+
+# No penalty
+modo <- glm(
+  model_formula, family = binomial(), data = imps_combined, weights = imps_combined$wts
+)
 ```
 
 ### Nomogram
