@@ -268,24 +268,74 @@ calplot_MI(
 Try intermediate updating with logreg recalibration
 
 ```{r updating}
-mod_coefs
-log_recal <- glm(imps_valid$Mc_FailedFemoralApproach ~ lp_valid, family = binomial())
-coef(log_recal)
+# 
+mod_recal <- split(df_calplot_valid, ~ .imp) |> 
+  map(.f = ~ glm(Mc_FailedFemoralApproach ~ lp_valid, family = binomial, data = .x)) |> 
+  mice::pool() |> 
+  summary()
+coefs_mod_recal <- mod_recal$estimate
+new_coefs <- drop(coefs_mod_recal[2] * mod_coefs[-1])
+new_coefs <- c(mod_coefs[1] + coefs_mod_recal[1], new_coefs) #new_coefs[1] - 0.1059395 #+ coefs_mod_recal[1]
+new_lp <- drop((new_coefs) %*% t(cbind(1, X_valid)))
 
-news_coefs <- c(coef(log_recal)[[1]], coef(log_recal)[[2]] * drop(mod_coefs)[-1])
-new_lp <- drop((news_coefs) %*% t(cbind(1, X_valid)))
+library(Hmisc)
+library(rms)
 
-df_calplot <- cbind.data.frame("lp" = new_lp, imps_valid)
+dd <- datadist(imps_valid %>% select(all_of(c(response_var, candidate_predictors)))); 
+options(datadist = "dd")
+
+CalibrationCurves::val.prob.ci.2(
+  y = (as.numeric(imps_valid$Mc_FailedFemoralApproach) - 1)[1:30000],
+  logit = (lp_valid)[1:30000], 
+  smooth = FALSE,
+  CL.smooth	= FALSE,
+  CL.BT	= FALSE,
+  logistic.cal = TRUE,
+  #g = 10,
+  dostats = FALSE
+)
+
+df_calplot <- cbind.data.frame("lp_recal" = new_lp, imps_valid)
 knots <- 4
-smooth_form <- reformulate(response = response_var, termlabels = paste0("splines::ns(lp, ", knots, ")"))
-mod_cal_stacked <- glm(formula = smooth_form, data = df_calplot, family = binomial())
+#smooth_form <- reformulate(response = response_var, termlabels = paste0("splines::ns(lp, ", knots, ")"))
+mod_cal_stacked <- glm(Mc_FailedFemoralApproach ~ ns(lp_recal, 4), data = df_calplot, family = binomial())
 stacked_df <- data.frame(
-    "predicted" = unique(plogis(new_lp)),
+    "predicted" = seq(0.01, 1, by = 0.01),
     "observed" = predict(mod_cal_stacked, 
-                         newdata = data.frame("lp" = unique(plogis(new_lp))), 
+                         newdata = data.frame("lp_recal" = seq(0.01, 1, by = 0.01)), 
                          type = "response")
 )
-plot(stacked_df$predicted, stacked_df$observed)
+plot(stacked_df$predicted, stacked_df$observed, xlim = c(0, 1), ylim = c(0, 1))
+
+# Try other
+
+# Try first all in one imp dataset
+imp1 <- subset(df_calplot_valid, .imp == 1)
+
+# See https://darrendahly.github.io/post/homr/
+m1 <- glm(Mc_FailedFemoralApproach ~ offset(lp_valid), data = imp1, family = binomial())
+m2 <- glm(Mc_FailedFemoralApproach ~ lp_valid, data = imp1, family = binomial())
+imp1$pred_m1 <- predict(m1, type = "response")
+imp1$pred_m2 <- predict(m2, type = "response")
+
+ggplot(data = imp1) +
+  geom_smooth(
+    aes(x = pred_m1, y = as.numeric(Mc_FailedFemoralApproach) - 1), 
+                  color = "red", se = FALSE, method = "loess"
+  ) +
+  geom_smooth(
+    aes(x = plogis(lp_valid), y = as.numeric(Mc_FailedFemoralApproach) - 1), 
+                  color = "black", se = FALSE, method = "loess"
+  ) + 
+  geom_smooth(
+    aes(x = pred_m2, y = as.numeric(Mc_FailedFemoralApproach) - 1), 
+                  color = "blue", se = FALSE, method = "loess"
+  ) + 
+  geom_abline(intercept = 0, slope = 1) +
+  lims(x = c(0, 1), y = c(0, 1))
+
+# Other tests 
+
 ```
 
 ## Updating to combined cohort

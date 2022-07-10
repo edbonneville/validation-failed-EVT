@@ -68,8 +68,8 @@ targets_list <- list(
   
   # We pick the number of imputations and specify our candidate predictors
   # such that we can directly add the weights for the stacked ridge
-  tar_target(validation_settings, list("B" = 3L, "n_folds" = 10L)), # change back to B = 200L
-  tar_target(imp_settings, list("m" = 50L, "n_cycles" = 15L)),
+  tar_target(validation_settings, list("B" = 200L, "n_folds" = 10L)), 
+  tar_target(imp_settings, list("m" = 50L, "n_cycles" = 20L)),
   tar_target(
     candidate_predictors, c(
       "M_age",
