@@ -109,7 +109,7 @@ naniar::gg_miss_upset(dat_valid, nsets = 10)
 naniar::gg_miss_upset(dat_develop, nsets = 10)
 ```
 
-(Naniar/JointAI summaries/VIM)
+<!-- (Naniar/JointAI summaries/VIM) -->
 
 ## Internal validation development set
 
@@ -123,8 +123,11 @@ mod_develop <- validation_dev_lambdamin$model_fit
 mod_coefs <- as.matrix(coef(mod_develop))
 colnames(mod_coefs) <- "Coefficients"
 
+# Print penalied model coefficients
 knitr::kable(data.frame(mod_coefs))
 ```
+
+Bootstrap-based internal validation, optimism-corrected performance:
 
 ```{r valid-dev}
 # Optimism corrected
@@ -135,11 +138,13 @@ validation_dev_lambdamin$validation_summary %>%
   knitr::kable()
 ```
 
+Calibration plot (apparent)
+
 ```{r dev-calib}
 calplot_MI(
   imps_long = imps_all %>% 
     filter(imps_label == "imps_assess" & dataset == "develop"),
-  model = mod_develop_1se, #validation_dev_lambdamin$model_fit,
+  model = validation_dev_lambdamin$model_fit,
   impdat_ind = ".imp",
   model_formula = model_formula,
   height_hist = 0.2,
@@ -160,45 +165,8 @@ imps_valid <- imps_all %>%
 
 X_valid <- subset(x = stats::model.matrix(model_formula, data = imps_valid), select = -`(Intercept)`)
 
-
-# 1 se test
-folds <- assign_crossval_folds(y = unique(imps_develop[[".id"]]), n_folds = 10)
-cross_val <- glmnet::cv.glmnet(
-    x = subset(x = stats::model.matrix(model_formula, data = imps_develop), select = -`(Intercept)`),
-    y = imps_develop$Mc_FailedFemoralApproach,
-    wts = imps_develop$wts,
-    foldid = folds[match(imps_develop[[".id"]], folds[["y"]]), "fold"],
-    family = "binomial",
-    alpha = 0
-  )
-plot(cross_val)
-
-folds <- assign_crossval_folds(y = unique(imps_all[[".id"]]), n_folds = 10)
-
-cross_val <- glmnet::cv.glmnet(
-    x = subset(x = stats::model.matrix(model_formula, data = imps_all), select = -`(Intercept)`),
-    y = imps_all$Mc_FailedFemoralApproach,
-    wts = imps_all$wts,
-    foldid = folds[match(imps_all[[".id"]], folds[["y"]]), "fold"],
-    family = "binomial",
-    alpha = 0
-  )
-cross_val$lambda
-plot(cross_val)
-
-
-mod_develop_1se <- run_stacked_glmnet(
-    x = subset(x = stats::model.matrix(model_formula, data = imps_develop), select = -`(Intercept)`),
-    y = imps_develop$Mc_FailedFemoralApproach,
-    wts = imps_develop$wts,
-    foldid = folds[match(imps_develop[[".id"]], folds[["y"]]), "fold"],
-    lambda_choice = "1se",
-    alpha = 0
-  )
-  
-
 # Compute linear predictor
-lp_valid <- drop(predict(mod_develop_1se, newx = X_valid))
+lp_valid <- drop(predict(mod_develop, newx = X_valid))
 df_calplot_valid <- cbind.data.frame(lp_valid, imps_valid)
 
 # Pool AUC
@@ -222,9 +190,10 @@ split(df_calplot_valid, ~ .imp) |>
   mice::pool() |> 
   summary()
 
+# Overestimation of risks
 calplot_MI(
   imps_long = imps_valid,
-  model = mod_develop_1se, #validation_dev_lambdamin$model_fit,
+  model = validation_dev_lambdamin$model_fit,
   impdat_ind = ".imp",
   model_formula = model_formula,
   height_hist = 0.2,
@@ -237,202 +206,61 @@ calplot_MI(
   theme_minimal()
 ```
 
+## Model update 1: logistic recalibration
 
-Try intermediate updating with logreg recalibration
-
-```{r updating}
+```{r log-recal}
 # 
-mod_recal <- split(df_calplot_valid, ~ .imp) |> 
-  map(.f = ~ glm(Mc_FailedFemoralApproach ~ lp_valid, family = binomial, data = .x)) |> 
-  mice::pool() |> 
-  summary()
-coefs_mod_recal <- mod_recal$estimate
-new_coefs <- drop(coefs_mod_recal[2] * mod_coefs[-1])
-new_coefs <- c(mod_coefs[1] + coefs_mod_recal[1], new_coefs) #new_coefs[1] - 0.1059395 #+ coefs_mod_recal[1]
-new_lp <- drop((new_coefs) %*% t(cbind(1, X_valid)))
-
-library(Hmisc)
-library(rms)
-
-dd <- datadist(imps_valid %>% select(all_of(c(response_var, candidate_predictors)))); 
-options(datadist = "dd")
-
-CalibrationCurves::val.prob.ci.2(
-  y = (as.numeric(imps_valid$Mc_FailedFemoralApproach) - 1)[1:30000],
-  logit = (lp_valid)[1:30000], 
-  smooth = FALSE,
-  CL.smooth	= FALSE,
-  CL.BT	= FALSE,
-  logistic.cal = TRUE,
-  #g = 10,
-  dostats = FALSE
+imps_valid$lp_valid <- lp_valid
+mod_recal <- glm(
+  Mc_FailedFemoralApproach ~ lp_valid, 
+  family = binomial(), 
+  data = imps_valid
 )
+boots_valid <- group_resample(imps_valid, id_var = ".id", 
+                              B = 50, 
+    boot_id_name = ".id_boot")
 
-df_calplot <- cbind.data.frame("lp_recal" = new_lp, imps_valid)
-knots <- 4
-#smooth_form <- reformulate(response = response_var, termlabels = paste0("splines::ns(lp, ", knots, ")"))
-mod_cal_stacked <- glm(Mc_FailedFemoralApproach ~ ns(lp_recal, 4), data = df_calplot, family = binomial())
-stacked_df <- data.frame(
-    "predicted" = seq(0.01, 1, by = 0.01),
-    "observed" = predict(mod_cal_stacked, 
-                         newdata = data.frame("lp_recal" = seq(0.01, 1, by = 0.01)), 
-                         type = "response")
+boots_cals <- map_dfr(boots_valid, function(boot_dat) {
+  mod_recal_boot <- glm(
+  Mc_FailedFemoralApproach ~ lp_valid, 
+  family = binomial(), 
+  data = boot_dat
 )
-plot(stacked_df$predicted, stacked_df$observed, xlim = c(0, 1), ylim = c(0, 1))
+  calibration_intercept_slope(
+    imps_valid$Mc_FailedFemoralApproach, predict(mod_recal_boot, newdata = imps_valid)
+  )
+})
+colMeans(boots_cals)
 
-# Try other
-
-# Try first all in one imp dataset
-imp1 <- subset(df_calplot_valid, .imp == 1)
-
-# See https://darrendahly.github.io/post/homr/
-m1 <- glm(Mc_FailedFemoralApproach ~ offset(lp_valid), data = imp1, family = binomial())
-m2 <- glm(Mc_FailedFemoralApproach ~ lp_valid, data = imp1, family = binomial())
-imp1$pred_m1 <- predict(m1, type = "response")
-imp1$pred_m2 <- predict(m2, type = "response")
-
-ggplot(data = imp1) +
+# Calib plot
+library(splines)
+ggplot() +
   geom_smooth(
-    aes(x = pred_m1, y = as.numeric(Mc_FailedFemoralApproach) - 1), 
-                  color = "red", se = FALSE, method = "loess"
+    data = cbind.data.frame(
+      "predicted" = predict(mod_recal, type = "response"), #wrrooong
+      "outcome" = as.numeric(imps_valid$Mc_FailedFemoralApproach) - 1L,
+      "imp" = imps_valid$.imp
+    ),
+    aes(
+      x = predicted,
+      y = outcome,
+      group = imp
+    ), method = "glm",
+    formula = y ~ ns(x, 5),
+    method.args = list(family = "binomial"),
+    se = FALSE,
+    col = "gray",
+    alpha = 0.7
   ) +
-  geom_smooth(
-    aes(x = plogis(lp_valid), y = as.numeric(Mc_FailedFemoralApproach) - 1), 
-                  color = "black", se = FALSE, method = "loess"
-  ) + 
-  geom_smooth(
-    aes(x = pred_m2, y = as.numeric(Mc_FailedFemoralApproach) - 1), 
-                  color = "blue", se = FALSE, method = "loess"
-  ) + 
   geom_abline(intercept = 0, slope = 1) +
   lims(x = c(0, 1), y = c(0, 1))
-
-# Other tests 
-
 ```
 
-## Updating to combined cohort
+## Model update 2: combined cohort re-estimation
 
-```{r combined-validation}
-imps_combined <- imps_all %>% 
-  filter(imps_label == "imps_combined")
+### Interaction-by-cohort (unpenalized)
 
-mod_combined <- validation_comb_lambdamin$model_fit
-validation_comb_lambdamin$model_fit$lambda
-mod_combined$beta
-
-validation_comb_lambdamin$validation_summary
-validation_comb_lambdamin$validation_df |> 
-  ggplot(aes(x = corrected)) +
-  geom_histogram(bins = 50) +
-  facet_wrap(~ measure, scales = "free")
-
-validation_comb_lambdamin$validation_df |> 
-  group_by(boot_num) |> 
-  summarise(pen = mean(penalty)) |>
-  #pull(pen) |>  mean()
-  ggplot(aes(pen)) +
-  geom_histogram()
-
-calplot_MI(
-  imps_long = imps_combined,
-  model = validation_comb_lambdamin$model_fit,
-  impdat_ind = ".imp",
-  model_formula = model_formula,
-  height_hist = 0.2,
-  startpos_hist = -0.25,
-  knots = 5,
-  n_bins = 200,
-  xlim = c(0, 0.55),
-  ylim = c(-0.25, 0.8)
-) +
-  theme_minimal()
-
-calplot_MI(
-  imps_long = imps_combined,
-  model = validation_comb_lambda1se$model_fit,
-  impdat_ind = ".imp",
-  model_formula = model_formula,
-  height_hist = 0.2,
-  startpos_hist = -0.25,
-  knots = 3,
-  n_bins = 200,
-  xlim = c(0, 0.55),
-  ylim = c(-0.25, 0.8)
-) +
-  theme_minimal()
-
-
-# Try the 1se on combined:
-imputations <- imps_combined
-formula <- model_formula
-n_folds = 10
-wts <- "wts"
-lambda_choice <- "1se"
-
-response_var <- all.vars(stats::update(formula, . ~ 1))
-  X_orig <- subset(x = stats::model.matrix(formula, data = imputations), select = -`(Intercept)`)
-  y_orig <- imputations[[response_var]]
-  wts_orig <- imputations[[wts]]
-  
-  folds <- assign_crossval_folds(y = unique(imputations[[".id"]]), n_folds = n_folds)
-cross_val <- glmnet::cv.glmnet(
-    x = X_orig,
-    y = y_orig,
-    weights = wts_orig,
-    foldid = folds[match(imputations[[".id"]], folds[["y"]]), "fold"],
-    family = "binomial", 
-    alpha = 0
-  )
-
-plot(cross_val)
-  
-dat_combined |> 
-  select(candidate_predictors, dataset) |>  
-    #Mc_FailedFemoralApproach, dataset) |> 
-  GGally::ggpairs(
-    aes(col = dataset, fill = dataset)
-  )
-  
-  
-  # First apparent performance - no penalty..
-mod <-glmnet::glmnet(
-    x = X_orig,
-    y = y_orig,
-    weights = wts_orig,
-    family = "binomial",
-    #lambda = 0, # unpenalized
-    lambda = cross_val$lambda.min,
-    alpha = 0, #ridge
-    intercept = TRUE
-  )
-
-hist(plogis(predict(mod, newx = X_orig)))
-max(plogis(predict(mod, newx = X_orig)))
-coef(mod)
-coef(
-  glm(model_formula, data = imps_combined, family = binomial())
-)
-calplot_MI(
-  imps_long = imps_combined,
-  model = mod,
-  impdat_ind = ".imp",
-  model_formula = model_formula,
-  height_hist = 0.2,
-  startpos_hist = -0.25,
-  knots = 5,
-  n_bins = 200,
-  xlim = c(0, 1),
-  ylim = c(-0.25, 1)
-) +
-  theme_minimal()
-
-
-# No penalty
-modo <- glm(
-  model_formula, family = binomial(), data = imps_combined, weights = imps_combined$wts
-)
-```
+(Ewout reference here, article)
 
 
 ```{r interaction-by-cohort}
@@ -510,6 +338,91 @@ cbind.data.frame(
 model.matrix(model_formula, data=imps_combined) %>% 
   cor(use="pairwise.complete.obs") %>% 
   ggcorrplot::ggcorrplot(show.diag = F, type="lower", lab=TRUE, lab_size=2)
+```
+
+### Internal validation combined cohort
+
+```{r combined-validation}
+imps_combined <- imps_all %>% 
+  filter(imps_label == "imps_combined")
+
+mod_combined <- validation_comb_lambdamin$model_fit
+validation_comb_lambdamin$model_fit$lambda
+mod_combined$beta
+
+validation_comb_lambdamin$validation_summary
+validation_comb_lambdamin$validation_df |> 
+  ggplot(aes(x = corrected)) +
+  geom_histogram(bins = 50) +
+  facet_wrap(~ measure, scales = "free")
+
+validation_comb_lambdamin$validation_df |> 
+  group_by(boot_num) |> 
+  summarise(pen = mean(penalty)) |>
+  #pull(pen) |>  mean()
+  ggplot(aes(pen)) +
+  geom_histogram()
+
+calplot_MI(
+  imps_long = imps_combined,
+  model = validation_comb_lambdamin$model_fit,
+  impdat_ind = ".imp",
+  model_formula = model_formula,
+  height_hist = 0.2,
+  startpos_hist = -0.25,
+  knots = 5,
+  n_bins = 200,
+  xlim = c(0, 0.55),
+  ylim = c(-0.25, 0.8)
+) +
+  theme_minimal()
+
+# Try simpler version of cal plot
+lp_combined <- predict(
+  validation_comb_lambdamin$model_fit,
+  newx = subset(
+    x = model.matrix(model_formula, data = imps_combined), 
+    select = -`(Intercept)`
+  )
+)
+
+df <- cbind.data.frame(
+      "predicted" = drop(lp_combined),
+      "outcome" = as.numeric(imps_combined$Mc_FailedFemoralApproach) - 1L,
+      "imp" = imps_combined$.imp
+    )
+
+binomial_smooth <- function(...) {
+  geom_smooth(method = "glm", method.args = list(family = "binomial"), ...)
+}
+
+ggplot(data = df, aes(plogis(predicted), outcome)) +
+  binomial_smooth(
+    aes(x = predicted),
+    formula = y ~ splines::ns(x, 3),
+    se = FALSE
+  ) #+
+  scale_x_continuous(trans = "log", limits = c(0.1, 1))
+  geom_smooth(
+    ,
+    aes(
+      x = predicted,
+      y = outcome#,
+      #group = imp
+    ), 
+    method = "glm",
+    #formula = y ~ splines::ns(x, 3),
+    method.args = list(family = "binomial"),
+    se = FALSE,
+    col = "gray",
+    alpha = 0.7
+  ) +
+  geom_abline(intercept = 0, slope = 1) +
+  lims(x = c(0, 1), y = c(0, 1))
+
+
+
+
 ```
 
 ### Nomogram
