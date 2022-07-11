@@ -454,6 +454,12 @@ cross_val <- glmnet::cv.glmnet(
 
 plot(cross_val)
   
+dat_combined |> 
+  select(candidate_predictors, dataset) |>  
+    #Mc_FailedFemoralApproach, dataset) |> 
+  GGally::ggpairs(
+    aes(col = dataset, fill = dataset)
+  )
   
   
   # First apparent performance - no penalty..
