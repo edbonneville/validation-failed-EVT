@@ -26,15 +26,28 @@ calplot_MI <- function(imps_long,
   risk_deciles <- quantile(pred_probs, probs = seq(0, 1, by = 0.1))
   risk_groups <- cut(pred_probs, breaks = risk_deciles, include.lowest = T)
   
+  # Scale the wts
+  scaled_wts <- imps_long$wts / sum(imps_long$wts)
+  
+  # https://stats.stackexchange.com/questions/220156/how-to-combine-pool-binomial-confidence-intervals-after-multiple-imputation 
+  #https://github.com/mwheymans/miceafter/blob/main/R/pool_prop_wilson.R
+  
+  # (Also see https://en.wikipedia.org/wiki/Binomial_proportion_confidence_interval#Standard_error_of_a_proportion_estimation_when_using_weighted_data)
   # This is wrong!!
   risk_pts <- cbind.data.frame(
     "predicted" = tapply(pred_probs, risk_groups, function(x) mean(x, na.rm = TRUE)),
-    "observed" = tapply(as.numeric(y) - 1L, risk_groups, function(x) mean(x, na.rm = TRUE))
+    "observed" = tapply(as.numeric(y) - 1L, risk_groups, function(x) mean(x, na.rm = TRUE)),
+    "sum_wts" = tapply(imps_long$wts, risk_groups, function(x) sum(x^2)), #sum((x / sum(x))^2)),
+    "n" = as.numeric(table(risk_groups))
   )
+  risk_pts$se <- with(risk_pts, sqrt(observed * (1 - observed) / n))
+  risk_pts$lower <- with(risk_pts, observed - qnorm(0.975) * se)
+  risk_pts$upper <- with(risk_pts, observed + qnorm(0.975) * se)
   
   # The "average" smooth calibration is simply the one fitted on stacked data
   smooth_form <- reformulate(response = response_var, termlabels = paste0("splines::ns(lp, ", knots, ")"))
-  mod_cal_stacked <- glm(formula = smooth_form, data = df_calplot, family = binomial())
+  mod_cal_stacked <- glm(formula = smooth_form, data = df_calplot, family = binomial(),#)#,
+                         weights = df_calplot$wts)
   stacked_df <- data.frame(
     "predicted" = probs_grid,
     "observed" = predict(mod_cal_stacked, newdata = data.frame("lp" = lp_grid), type = "response") - startpos_hist
@@ -67,8 +80,10 @@ calplot_MI <- function(imps_long,
       aes(x = predicted, y = observed),
       size = 2
     ) +
-    geom_abline(intercept = 0 - startpos_hist,
-                slope = 1, col = "red", size = 1, linetype = "dashed") +
+    geom_abline(
+      intercept = 0 - startpos_hist,
+      slope = 1, col = "red", size = 1, linetype = "dashed"
+    ) +
     geom_histogram(
       data = data.frame("predicted" = plogis(df_calplot$lp)),
       aes(x = predicted, y = stat(height_hist * count / max(count))),
@@ -88,10 +103,17 @@ calplot_MI <- function(imps_long,
     geom_point(
       data = risk_pts,
       aes(predicted, observed - startpos_hist),
-      size = 2.5,
+      size = 2,
       col = "blue", 
       shape = 2
-    )
+    ) 
+  # p +
+  #   geom_linerange(
+  #     data = risk_pts,
+  #     aes(predicted, observed - startpos_hist,
+  #         ymin = lower - startpos_hist, ymax = upper - startpos_hist),
+  #     size = 1
+  #   )
   
   #. Plot also deciles/quintiles of predicted/observed as in val.prob.ci2?
   

@@ -50,7 +50,9 @@ tar_load(
     model_formula,
     analysis_settings,
     validation_dev_lambdamin,
-    validation_comb_lambdamin
+    validation_comb_lambdamin,
+    validation_dev_lambda1se,
+    validation_comb_lambda1se
   )
 )
 
@@ -93,7 +95,6 @@ kableone(table_one$CatTable)
 
 ### Missing data summaries 
 
-
 ```{r miss-dat-summ}
 # Seperate datasets
 dat_develop <- subset(x = dat_to_impute, select = -dataset, subset = (dataset == "develop"))
@@ -106,6 +107,8 @@ mean(complete.cases(dat_to_impute[, c("Mc_FailedFemoralApproach", candidate_pred
 
 # Visualise missings beforehand
 naniar::gg_miss_var(dat_to_impute, facet = dataset, show_pct = TRUE)
+naniar::gg_miss_upset(dat_valid, nsets = 10)
+naniar::gg_miss_upset(dat_develop, nsets = 10)
 ```
 
 (Naniar/JointAI summaries/VIM)
@@ -191,7 +194,7 @@ knitr::kable(data.frame(mod_coefs))
 ```
 
 ```{r valid-dev}
-# Optimism correctedL
+# Optimism corrected
 validation_dev_lambdamin$validation_summary %>% 
   filter(measure %in% c("auc", "intercept", "slope")) %>% 
   group_by(measure) %>% 
@@ -203,7 +206,7 @@ validation_dev_lambdamin$validation_summary %>%
 calplot_MI(
   imps_long = imps_all %>% 
     filter(imps_label == "imps_assess" & dataset == "develop"),
-  model = validation_dev_lambdamin$model_fit,
+  model = mod_develop_1se, #validation_dev_lambdamin$model_fit,
   impdat_ind = ".imp",
   model_formula = model_formula,
   height_hist = 0.2,
@@ -224,8 +227,45 @@ imps_valid <- imps_all %>%
 
 X_valid <- subset(x = stats::model.matrix(model_formula, data = imps_valid), select = -`(Intercept)`)
 
+
+# 1 se test
+folds <- assign_crossval_folds(y = unique(imps_develop[[".id"]]), n_folds = 10)
+cross_val <- glmnet::cv.glmnet(
+    x = subset(x = stats::model.matrix(model_formula, data = imps_develop), select = -`(Intercept)`),
+    y = imps_develop$Mc_FailedFemoralApproach,
+    wts = imps_develop$wts,
+    foldid = folds[match(imps_develop[[".id"]], folds[["y"]]), "fold"],
+    family = "binomial",
+    alpha = 0
+  )
+plot(cross_val)
+
+folds <- assign_crossval_folds(y = unique(imps_all[[".id"]]), n_folds = 10)
+
+cross_val <- glmnet::cv.glmnet(
+    x = subset(x = stats::model.matrix(model_formula, data = imps_all), select = -`(Intercept)`),
+    y = imps_all$Mc_FailedFemoralApproach,
+    wts = imps_all$wts,
+    foldid = folds[match(imps_all[[".id"]], folds[["y"]]), "fold"],
+    family = "binomial",
+    alpha = 0
+  )
+cross_val$lambda
+plot(cross_val)
+
+
+mod_develop_1se <- run_stacked_glmnet(
+    x = subset(x = stats::model.matrix(model_formula, data = imps_develop), select = -`(Intercept)`),
+    y = imps_develop$Mc_FailedFemoralApproach,
+    wts = imps_develop$wts,
+    foldid = folds[match(imps_develop[[".id"]], folds[["y"]]), "fold"],
+    lambda_choice = "1se",
+    alpha = 0
+  )
+  
+
 # Compute linear predictor
-lp_valid <- drop(predict(mod_develop, newx = X_valid))
+lp_valid <- drop(predict(mod_develop_1se, newx = X_valid))
 df_calplot_valid <- cbind.data.frame(lp_valid, imps_valid)
 
 # Pool AUC
@@ -251,7 +291,7 @@ split(df_calplot_valid, ~ .imp) |>
 
 calplot_MI(
   imps_long = imps_valid,
-  model = validation_dev_lambdamin$model_fit,
+  model = mod_develop_1se, #validation_dev_lambdamin$model_fit,
   impdat_ind = ".imp",
   model_formula = model_formula,
   height_hist = 0.2,
@@ -375,6 +415,20 @@ calplot_MI(
 ) +
   theme_minimal()
 
+calplot_MI(
+  imps_long = imps_combined,
+  model = validation_comb_lambda1se$model_fit,
+  impdat_ind = ".imp",
+  model_formula = model_formula,
+  height_hist = 0.2,
+  startpos_hist = -0.25,
+  knots = 3,
+  n_bins = 200,
+  xlim = c(0, 0.55),
+  ylim = c(-0.25, 0.8)
+) +
+  theme_minimal()
+
 
 # Try the 1se on combined:
 imputations <- imps_combined
@@ -439,6 +493,84 @@ calplot_MI(
 modo <- glm(
   model_formula, family = binomial(), data = imps_combined, weights = imps_combined$wts
 )
+```
+
+
+```{r interaction-by-cohort}
+split(imps_combined, ~ .imp) |> 
+  map(.f = ~ glm(update(model_formula, . ~ . * dataset), family = binomial, data = .x)) |> 
+  mice::pool() |> 
+  broom::tidy() |>  
+  ggforestplot::forestplot(
+    name = term,
+    estimate = estimate,
+    se = std.error
+  )
+
+split(imps_combined, ~ .imp) |> 
+  map(.f = ~ glm(update(model_formula, . ~ . * dataset), family = binomial, data = .x)) |> 
+  mice::pool() |> 
+  broom::tidy() |> 
+  select(term, estimate)
+
+split(imps_combined |> filter(dataset == "develop"), ~ .imp) |> 
+  map(.f = ~ glm(model_formula, family = binomial, data = .x)) |> 
+  mice::pool() |> 
+  broom::tidy() |> 
+  pull(estimate)
+
+cbind.data.frame(
+  split(imps_combined, ~ .imp) |> 
+  map(.f = ~ glm(update(model_formula, . ~ . * dataset), family = binomial, data = .x)) |> 
+  mice::pool() |> 
+  broom::tidy() |> 
+  select(term, estimate),
+  "develop" = split(imps_combined |> filter(dataset == "develop"), ~ .imp) |> 
+  map(.f = ~ glm(model_formula, family = binomial, data = .x)) |> 
+  mice::pool() |> 
+  broom::tidy() |> 
+  pull(estimate),
+  "valid" =  split(imps_combined |> filter(dataset == "valid"), ~ .imp) |> 
+  map(.f = ~ glm(model_formula, family = binomial, data = .x)) |> 
+  mice::pool() |> 
+  broom::tidy() |> 
+  pull(estimate),
+  "combined" =  split(imps_combined, ~ .imp) |> 
+  map(.f = ~ glm(model_formula, family = binomial, data = .x)) |> 
+  mice::pool() |> 
+  broom::tidy() |> 
+  pull(estimate)
+) |> 
+  View()
+
+# ORs
+cbind.data.frame(
+  split(imps_combined, ~ .imp) |> 
+  map(.f = ~ glm(update(model_formula, . ~ . * dataset), family = binomial, data = .x)) |> 
+  mice::pool() |> 
+  broom::tidy(exponentiate = TRUE) |> 
+  select(term, estimate),
+  "develop" = split(imps_combined |> filter(dataset == "develop"), ~ .imp) |> 
+  map(.f = ~ glm(model_formula, family = binomial, data = .x)) |> 
+  mice::pool() |> 
+  broom::tidy(exponentiate = TRUE) |> 
+  pull(estimate),
+  "valid" =  split(imps_combined |> filter(dataset == "valid"), ~ .imp) |> 
+  map(.f = ~ glm(model_formula, family = binomial, data = .x)) |> 
+  mice::pool() |> 
+  broom::tidy(exponentiate = TRUE) |> 
+  pull(estimate),
+  "combined" =  split(imps_combined, ~ .imp) |> 
+  map(.f = ~ glm(model_formula, family = binomial, data = .x)) |> 
+  mice::pool() |> 
+  broom::tidy(exponentiate = TRUE) |> 
+  pull(estimate)
+) |> 
+  View()
+
+model.matrix(model_formula, data=imps_combined) %>% 
+  cor(use="pairwise.complete.obs") %>% 
+  ggcorrplot::ggcorrplot(show.diag = F, type="lower", lab=TRUE, lab_size=2)
 ```
 
 ### Nomogram
