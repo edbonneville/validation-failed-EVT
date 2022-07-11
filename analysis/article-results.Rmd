@@ -50,9 +50,7 @@ tar_load(
     model_formula,
     analysis_settings,
     validation_dev_lambdamin,
-    validation_comb_lambdamin,
-    validation_dev_lambda1se,
-    validation_comb_lambda1se
+    validation_comb_lambdamin
   )
 )
 
@@ -112,71 +110,6 @@ naniar::gg_miss_upset(dat_develop, nsets = 10)
 ```
 
 (Naniar/JointAI summaries/VIM)
-
-## Univariable analyses
-
-```{r univar-analyses}
-univariate_analyses <- imps_all %>% 
-  
-  # Only use separately imputed develop, valid and combined cohorts
-  filter(imps_label != "imps_assess") %>% 
-  
-  # Split each of three cohorts, and run analyses on each
-  split(f = .$imps_label) %>% 
-  map(.f = ~ {
-    imps_univariate_ORs(
-      outcome = "Mc_FailedFemoralApproach", 
-      imps = split(.x, .x$.imp),
-      predictors = c(
-        candidate_predictors, 
-        "ICA_nr_90orLarger",
-        "OrigoStenosis50percent",
-        "ICAIAtherosclerosis",
-        "AngleAaInn_OR_AaCca"
-      )
-    )
-  }) %>% 
-  bind_rows(.id = "cohort") 
-
-# Make the table
-univariate_table <- univariate_analyses %>% 
-  select(cohort, term, estimate, `2.5 %`, `97.5 %`) %>%
-  mutate(across(where(is.numeric), ~ round(.x, 2))) %>% 
-  mutate(
-    OR = paste0(estimate, " [", `2.5 %`, "-", `97.5 %`, "]"),
-    cohort = factor(
-      cohort, 
-      levels = c("imps_dev", "imps_valid", "imps_combined"),
-      labels = c("develop_cohort", "validation_cohort", "combined_cohort")
-    )
-  ) %>% 
-  
-  # Spread and set column order
-  pivot_wider(names_from = cohort, values_from = OR, id_cols = term) %>% 
-  select(term, develop_cohort, validation_cohort, combined_cohort)
-
-knitr::kable(univariate_table)
-```
-
-### Interaction analyses
-
-```{r inters-univar}
-# Cohort interactions (Should probably be ommitted from manuscript)
-dat_interactions <- imps_all %>% 
-  filter(imps_label %in% c("imps_dev", "imps_valid"))
-
-interactions_table <- imps_univariate_ORs(
-  outcome = "Mc_FailedFemoralApproach",
-  imps = split(x = dat_interactions, f = dat_interactions$.imp),
-  predictors = paste0(candidate_predictors, " * imps_label") # imp_label is surrogate for cohort
-) %>% 
-  
-  # Keep only interaction terms - keep  p-values
-  filter(grepl(x = term, pattern = "\\:")) %>% 
-  select(term, p.value)
-
-knitr::kable(interactions_table)
-```
 
 ## Internal validation development set
 

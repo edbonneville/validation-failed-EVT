@@ -133,30 +133,6 @@ targets_list <- list(
       lambda_choice = "min",
       B = validation_settings$B
     )
-  ),
-  
-  # Build them with 1se rule
-  tar_target(
-    validation_dev_lambda1se,
-    validate_stackedImps(
-      imputations = imps_all %>% filter(imps_label == "imps_assess" & dataset == "develop"),
-      formula = model_formula,
-      wts = "wts",
-      n_folds = validation_settings$n_folds,
-      lambda_choice = "1se", #"1se" crazy results with 1se, skip
-      B = 3 #validation_settings$B
-    )
-  ),
-  tar_target(
-    validation_comb_lambda1se,
-    validate_stackedImps(
-      imputations = imps_all %>% filter(imps_label == "imps_combined"),
-      formula = model_formula,
-      wts = "wts",
-      n_folds = validation_settings$n_folds,
-      lambda_choice = "1se",
-      B = 3 #validation_settings$B
-    )
   )
   # 
   #tarchetypes::tar_render(analysis_summary, path = "analysis/2020-09_analysis-summary.Rmd")
