@@ -116,6 +116,65 @@ group_resample_dt <- function(dat,
   dplyr::slice(dat, slices_repped)
 }
 
+group_resample_dt2 <- function(dat, 
+                               id_var, 
+                               B = 50, 
+                               boot_id_name = ".id_boot") {
+  
+  # Gather unique ids and resample
+  ids_long <- dat[[id_var]]
+  
+  # Sample, and prepare slices
+  samps <- sample(x = unique(ids_long), replace = TRUE)
+  inds_bigdat <- which(ids_long %in% samps)
+  df <- data.table("ind" = inds_bigdat, "ids" = ids_long[inds_bigdat])
+  df[, reps := sum(samps == ids), by = ids]
+  slices_repped <- df[, .(inds_boot = rep(ind, reps))][["inds_boot"]]
+  dplyr::slice(dat, slices_repped)
+}
+
+
+group_resample4 <- function(dat, 
+                            id_var, 
+                            B = 50, 
+                            boot_id_name = ".id_boot") {
+  
+  # Gather unique ids and resample
+  setDT(dat)
+  ids_long <- dat[[id_var]]
+  
+  # Sample, and prepare slices (not as.numeric if making more general)
+  boot_dats <- lapply(seq_len(B), function(b) {
+    #cat(b)
+    samps <- sample(x = unique(ids_long), replace = TRUE)
+    inds_bigdat <- which(ids_long %in% samps)
+    ids_bigdat <- ids_long[inds_bigdat]
+    tbl <- tabulate(samps, nbins = length(samps))
+    dat[rep(inds_bigdat, times = tbl[ids_bigdat])]
+  })
+  
+  return(boot_dats)
+}
+
+
+testo <- group_resample4(
+  dat = imps_combined,
+  id_var = ".id",
+  B = 200
+)
+
+res <- microbenchmark::microbenchmark(
+  group_resample4(
+    dat = imps_combined,
+    id_var = ".id",
+    B = 20
+  ),
+  times = 50L
+)
+boxplot(res)
+ggplot2::autoplot(res)
+
+
 #
 microbenchmark::microbenchmark(
   "orig" = {
@@ -150,20 +209,20 @@ microbenchmark::microbenchmark(
       boot_id_name = ".id_boot"
     )
   },
-  times = 5L
-)
-
-
-# The beasts
-microbenchmark::microbenchmark(
-  "slices_rep" = {
-    group_resample3(
+  "slices_rep_dt2" = {
+    group_resample_dt2(
       dat = imps_combined,
       id_var = ".id",
       B = 1 ,
       boot_id_name = ".id_boot"
     )
   },
+  times = 5L
+)
+
+
+# The beasts
+microbenchmark::microbenchmark(
   "slices_rep_dt" = {
     group_resample_dt(
       dat = imps_combined,
@@ -172,19 +231,26 @@ microbenchmark::microbenchmark(
       boot_id_name = ".id_boot"
     )
   },
-  times = 20L
-)
-
-profvis::profvis(
-  {
-    group_resample_dt(
+  "slices_rep_dt2" = {
+    group_resample_dt2(
       dat = imps_combined,
       id_var = ".id",
       B = 1 ,
       boot_id_name = ".id_boot"
     )
-  }
+  },
+  "tabul" = {
+    group_resample4(
+      dat = imps_combined,
+      id_var = ".id",
+      B = 1 ,
+      boot_id_name = ".id_boot"
+    )
+  },
+  times = 30L
 )
+
+
 
 test <- group_resample3_ext(
   dat = imps_combined,

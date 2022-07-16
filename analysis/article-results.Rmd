@@ -26,7 +26,11 @@ library(ggplot2)
 library(targets)
 library(tidyverse)
 library(tableone)
+library(rms)
+library(glmnet)
+```
 
+```{r objs}
 # Source functions
 source("data-raw/prepare_raw_data.R")
 source("R/imputation-helpers.R")
@@ -38,9 +42,7 @@ options(contrasts = rep("contr.treatment", 2))
 
 # Set global setting
 theme_set(theme_minimal(base_size = 14))
-```
 
-```{r objs}
 tar_load(
   c(
     dat_combined,
@@ -62,7 +64,7 @@ response_var <- all.vars(stats::update(model_formula, . ~ 1))
 
 ### Table 1
 
-For continous variables:
+For continuous variables:
 
 ```{r table-one-contin}
 # Gives you everything for tables 1 and 2 (warnings due to variables not in validation, ignore!)
@@ -99,8 +101,14 @@ dat_develop <- subset(x = dat_to_impute, select = -dataset, subset = (dataset ==
 dat_valid <- subset(x = dat_to_impute, select = -dataset, subset = (dataset == "valid"))
 
 # Check proportion of complete cases in target analysis (quite good, compare results)
+
+# Development
 mean(complete.cases(dat_develop[, c("Mc_FailedFemoralApproach", candidate_predictors)]))
+
+# Validation
 mean(complete.cases(dat_valid[, c("Mc_FailedFemoralApproach", candidate_predictors)]))
+
+# Combined
 mean(complete.cases(dat_to_impute[, c("Mc_FailedFemoralApproach", candidate_predictors)]))
 
 # Visualise missings beforehand
@@ -206,64 +214,16 @@ calplot_MI(
   theme_minimal()
 ```
 
-## Model update 1: logistic recalibration
-
-```{r log-recal}
-# 
-imps_valid$lp_valid <- lp_valid
-mod_recal <- glm(
-  Mc_FailedFemoralApproach ~ lp_valid, 
-  family = binomial(), 
-  data = imps_valid
-)
-boots_valid <- group_resample(imps_valid, id_var = ".id", 
-                              B = 50, 
-    boot_id_name = ".id_boot")
-
-boots_cals <- map_dfr(boots_valid, function(boot_dat) {
-  mod_recal_boot <- glm(
-  Mc_FailedFemoralApproach ~ lp_valid, 
-  family = binomial(), 
-  data = boot_dat
-)
-  calibration_intercept_slope(
-    imps_valid$Mc_FailedFemoralApproach, predict(mod_recal_boot, newdata = imps_valid)
-  )
-})
-colMeans(boots_cals)
-
-# Calib plot
-library(splines)
-ggplot() +
-  geom_smooth(
-    data = cbind.data.frame(
-      "predicted" = predict(mod_recal, type = "response"), #wrrooong
-      "outcome" = as.numeric(imps_valid$Mc_FailedFemoralApproach) - 1L,
-      "imp" = imps_valid$.imp
-    ),
-    aes(
-      x = predicted,
-      y = outcome,
-      group = imp
-    ), method = "glm",
-    formula = y ~ ns(x, 5),
-    method.args = list(family = "binomial"),
-    se = FALSE,
-    col = "gray",
-    alpha = 0.7
-  ) +
-  geom_abline(intercept = 0, slope = 1) +
-  lims(x = c(0, 1), y = c(0, 1))
-```
-
-## Model update 2: combined cohort re-estimation
+## Model update: combined cohort re-estimation
 
 ### Interaction-by-cohort (unpenalized)
 
 (Ewout reference here, article)
 
-
 ```{r interaction-by-cohort}
+imps_combined <- imps_all %>% 
+  filter(imps_label == "imps_combined")
+
 split(imps_combined, ~ .imp) |> 
   map(.f = ~ glm(update(model_formula, . ~ . * dataset), family = binomial, data = .x)) |> 
   mice::pool() |> 
@@ -343,12 +303,14 @@ model.matrix(model_formula, data=imps_combined) %>%
 ### Internal validation combined cohort
 
 ```{r combined-validation}
-imps_combined <- imps_all %>% 
-  filter(imps_label == "imps_combined")
-
 mod_combined <- validation_comb_lambdamin$model_fit
-validation_comb_lambdamin$model_fit$lambda
-mod_combined$beta
+#validation_comb_lambdamin$model_fit$lambda
+
+mod_coefs_comb <- as.matrix(coef(mod_combined))
+colnames(mod_coefs_comb) <- "Coefficients"
+
+# Print penalied model coefficients
+knitr::kable(data.frame(mod_coefs_comb))
 
 validation_comb_lambdamin$validation_summary
 validation_comb_lambdamin$validation_df |> 
@@ -376,53 +338,8 @@ calplot_MI(
   ylim = c(-0.25, 0.8)
 ) +
   theme_minimal()
-
-# Try simpler version of cal plot
-lp_combined <- predict(
-  validation_comb_lambdamin$model_fit,
-  newx = subset(
-    x = model.matrix(model_formula, data = imps_combined), 
-    select = -`(Intercept)`
-  )
-)
-
-df <- cbind.data.frame(
-      "predicted" = drop(lp_combined),
-      "outcome" = as.numeric(imps_combined$Mc_FailedFemoralApproach) - 1L,
-      "imp" = imps_combined$.imp
-    )
-
-binomial_smooth <- function(...) {
-  geom_smooth(method = "glm", method.args = list(family = "binomial"), ...)
-}
-
-ggplot(data = df, aes(plogis(predicted), outcome)) +
-  binomial_smooth(
-    aes(x = predicted),
-    formula = y ~ splines::ns(x, 3),
-    se = FALSE
-  ) #+
-  scale_x_continuous(trans = "log", limits = c(0.1, 1))
-  geom_smooth(
-    ,
-    aes(
-      x = predicted,
-      y = outcome#,
-      #group = imp
-    ), 
-    method = "glm",
-    #formula = y ~ splines::ns(x, 3),
-    method.args = list(family = "binomial"),
-    se = FALSE,
-    col = "gray",
-    alpha = 0.7
-  ) +
-  geom_abline(intercept = 0, slope = 1) +
-  lims(x = c(0, 1), y = c(0, 1))
-
-
-
-
 ```
 
 ### Nomogram
+
+
