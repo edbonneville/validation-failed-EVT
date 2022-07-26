@@ -316,80 +316,39 @@ calplot_MI(
 imps_combined <- imps_all %>% 
   filter(imps_label == "imps_combined")
 
-split(imps_combined, ~ .imp) |> 
+inter_model <- split(imps_combined, ~ .imp) |> 
   map(.f = ~ glm(update(model_formula, . ~ . * dataset), family = binomial, data = .x)) |> 
   mice::pool() |> 
-  broom::tidy() |>  
-  ggforestplot::forestplot(
-    name = term,
-    estimate = estimate,
-    se = std.error
+  broom::tidy() 
+
+summ_inter <- cbind.data.frame(
+  inter_model |>  
+    filter(str_detect(term, pattern = "valid$", negate = TRUE)) |> 
+    select(term),
+  "development" = inter_model |>  
+    filter(str_detect(term, pattern = "valid$", negate = TRUE)) |> 
+    pull(estimate),
+  "interaction" = inter_model |>  
+    filter(str_detect(term, pattern = "valid$")) |> 
+    pull(estimate),
+  "pval_interaction" = inter_model |>  
+    filter(str_detect(term, pattern = "valid$")) |> 
+    pull(p.value)
+) |> 
+  mutate(
+    validation = development + interaction
+  ) |> 
+  mutate(across(where(is.numeric), ~ round(.x, 3)))
+
+DT::datatable(
+  summ_inter,
+  extensions = 'Buttons',
+  options = list(
+    dom = 'Blfrtip', 
+    buttons = c('csv', 'excel', 'pdf'),
+    lengthMenu = list(c(10, 25, 50, -1), c(10, 25, 50, "All"))
   )
-
-split(imps_combined, ~ .imp) |> 
-  map(.f = ~ glm(update(model_formula, . ~ . * dataset), family = binomial, data = .x)) |> 
-  mice::pool() |> 
-  broom::tidy() |> 
-  select(term, estimate)
-
-split(imps_combined |> filter(dataset == "develop"), ~ .imp) |> 
-  map(.f = ~ glm(model_formula, family = binomial, data = .x)) |> 
-  mice::pool() |> 
-  broom::tidy() |> 
-  pull(estimate)
-
-cbind.data.frame(
-  split(imps_combined, ~ .imp) |> 
-  map(.f = ~ glm(update(model_formula, . ~ . * dataset), family = binomial, data = .x)) |> 
-  mice::pool() |> 
-  broom::tidy() |> 
-  select(term, estimate),
-  "develop" = split(imps_combined |> filter(dataset == "develop"), ~ .imp) |> 
-  map(.f = ~ glm(model_formula, family = binomial, data = .x)) |> 
-  mice::pool() |> 
-  broom::tidy() |> 
-  pull(estimate),
-  "valid" =  split(imps_combined |> filter(dataset == "valid"), ~ .imp) |> 
-  map(.f = ~ glm(model_formula, family = binomial, data = .x)) |> 
-  mice::pool() |> 
-  broom::tidy() |> 
-  pull(estimate),
-  "combined" =  split(imps_combined, ~ .imp) |> 
-  map(.f = ~ glm(model_formula, family = binomial, data = .x)) |> 
-  mice::pool() |> 
-  broom::tidy() |> 
-  pull(estimate)
-) |> 
-  View()
-
-# ORs
-cbind.data.frame(
-  split(imps_combined, ~ .imp) |> 
-  map(.f = ~ glm(update(model_formula, . ~ . * dataset), family = binomial, data = .x)) |> 
-  mice::pool() |> 
-  broom::tidy(exponentiate = TRUE) |> 
-  select(term, estimate),
-  "develop" = split(imps_combined |> filter(dataset == "develop"), ~ .imp) |> 
-  map(.f = ~ glm(model_formula, family = binomial, data = .x)) |> 
-  mice::pool() |> 
-  broom::tidy(exponentiate = TRUE) |> 
-  pull(estimate),
-  "valid" =  split(imps_combined |> filter(dataset == "valid"), ~ .imp) |> 
-  map(.f = ~ glm(model_formula, family = binomial, data = .x)) |> 
-  mice::pool() |> 
-  broom::tidy(exponentiate = TRUE) |> 
-  pull(estimate),
-  "combined" =  split(imps_combined, ~ .imp) |> 
-  map(.f = ~ glm(model_formula, family = binomial, data = .x)) |> 
-  mice::pool() |> 
-  broom::tidy(exponentiate = TRUE) |> 
-  pull(estimate)
-) |> 
-  View()
-
-model.matrix(model_formula, data=imps_combined) %>% 
-  cor(use="pairwise.complete.obs") %>% 
-  ggcorrplot::ggcorrplot(show.diag = F, type="lower", lab=TRUE, lab_size=2)
+)
 ```
 
 ### Internal validation combined cohort
@@ -401,21 +360,23 @@ mod_combined <- validation_comb_lambdamin$model_fit
 mod_coefs_comb <- as.matrix(coef(mod_combined))
 colnames(mod_coefs_comb) <- "Coefficients"
 
-# Print penalied model coefficients
-knitr::kable(data.frame(mod_coefs_comb))
+# Print penalised model coefficients
+DT::datatable(
+  data.frame(round(mod_coefs_comb, digits = 3)),
+  extensions = 'Buttons',
+  options = list(
+    dom = 'Blfrtip', 
+    buttons = c('csv', 'excel', 'pdf'),
+    lengthMenu = list(c(10, 25, 50, -1), c(10, 25, 50, "All"))
+  )
+)
 
-validation_comb_lambdamin$validation_summary
-validation_comb_lambdamin$validation_df |> 
-  ggplot(aes(x = corrected)) +
-  geom_histogram(bins = 50) +
-  facet_wrap(~ measure, scales = "free")
-
-validation_comb_lambdamin$validation_df |> 
-  group_by(boot_num) |> 
-  summarise(pen = mean(penalty)) |>
-  #pull(pen) |>  mean()
-  ggplot(aes(pen)) +
-  geom_histogram()
+# Optimism corrected
+validation_comb_lambdamin$validation_summary %>% 
+  filter(measure %in% c("auc", "intercept", "slope")) %>% 
+  group_by(measure) %>% 
+  summarise(value = paste0(corrected, " [", lower_corrected, ";", upper_corrected, "]")) %>%
+  knitr::kable()
 
 calplot_MI(
   imps_long = imps_combined,
@@ -434,4 +395,51 @@ calplot_MI(
 
 ### Nomogram
 
+```{r nomogram}
+# Make data for nomogram labels
+dat_nomogram <- imps_combined %>% 
+  select(all_of(c(response_var, candidate_predictors))) %>% 
+  mutate(
+    InnCca_nr_90orLarger = factor(
+      InnCca_nr_90orLarger,
+      levels = levels(InnCca_nr_90orLarger),
+      labels = c("0", ">=1")
+    ),
+    ICAE_NASCET_Degree = factor(
+      ICAE_NASCET_Degree,
+      levels = levels(ICAE_NASCET_Degree),
+      labels = c("<99", ">=99")
+    )
+  )
+
+# Set variable labels
+Hmisc::label(dat_nomogram$M_age) <- "Age (decades)"
+Hmisc::label(dat_nomogram$M_prev_ht) <- "Hypertension"
+Hmisc::label(dat_nomogram$AorticVariant) <- "Aortic variant"
+Hmisc::label(dat_nomogram$ArchElongation) <- "Arch Elongation"
+Hmisc::label(dat_nomogram$AngleFollowingBifurcation) <- "Angle post-bifurcation"
+Hmisc::label(dat_nomogram$InnCca_nr_90orLarger) <- "CCA angles >=90 degr."
+Hmisc::label(dat_nomogram$ICAE_NASCET_Degree) <- "ICA stenosis"
+
+dd <- datadist(dat_nomogram)
+options(datadist = "dd")
+
+# Edit some labels
+mod_lrm <- lrm(model_formula, data = dat_nomogram)
+mod_lrm$coefficients <- setNames(unname(drop(mod_coefs_comb)), names(mod_lrm$coefficients))
+
+par(mar = c(2,2,1,1))
+nom <- nomogram(
+  fit = mod_lrm, 
+  fun = plogis, 
+  maxscale = 10, 
+  funlabel = "Predicted probability", 
+  lp = FALSE, 
+  fun.at = c(.01, .05, seq(.1, 1, by = .1))
+)
+
+plot(nom)
+
+# Get max probability in combined dataset?
+```
 
