@@ -1,5 +1,5 @@
 ---
-title: "Article results"
+title: "Validation failed EVT"
 author: "E. F. Bonneville"
 date: "`r Sys.setenv(LANG = 'en_US.UTF-8'); format(Sys.Date(), '%d %B %Y')`"
 output: 
@@ -28,6 +28,7 @@ library(tidyverse)
 library(tableone)
 library(rms)
 library(glmnet)
+library(DT)
 ```
 
 ```{r objs}
@@ -83,34 +84,79 @@ table_one <- dat_combined %>%
   CreateTableOne(data = ., strata = "dataset")
 
 # Summaries of all continuous variables
-kableone(table_one$ContTable, nonnormal = TRUE)
+invisible(
+  capture.output(
+    tab_contin <- print(
+      x = table_one$ContTable, 
+      nonnormal = TRUE, 
+      noSpaces = TRUE
+    )
+  )
+)
+
+#https://stackoverflow.com/questions/50039186/add-download-buttons-in-dtrenderdatatable
+DT::datatable(
+  tab_contin,
+  extensions = 'Buttons',
+  options = list(
+    dom = 'Blfrtip', 
+    buttons = c('csv', 'excel', 'pdf'),
+    lengthMenu = list(c(10, 25, 50, -1), c(10, 25, 50, "All"))
+  )
+)
 ```
 
 For categorical variables:
 
 ```{r table-one-categ}
 # Summaries of all categorical variables
-kableone(table_one$CatTable)
+invisible(
+  capture.output(
+    tab_cat <- print(
+      x = table_one$CatTable, 
+      nonnormal = TRUE, 
+      noSpaces = TRUE
+    )
+  )
+)
+
+DT::datatable(
+  tab_cat,
+  extensions = 'Buttons',
+  options = list(
+    dom = 'Blfrtip', 
+    buttons = c('csv', 'excel', 'pdf'),
+    lengthMenu = list(c(10, 25, 50, -1), c(10, 25, 50, "All"))
+  )
+)
 ```
 
 ### Missing data summaries 
 
-```{r miss-dat-summ}
+
+```{r cca-check}
 # Seperate datasets
 dat_develop <- subset(x = dat_to_impute, select = -dataset, subset = (dataset == "develop"))
+
 dat_valid <- subset(x = dat_to_impute, select = -dataset, subset = (dataset == "valid"))
 
-# Check proportion of complete cases in target analysis (quite good, compare results)
-
 # Development
-mean(complete.cases(dat_develop[, c("Mc_FailedFemoralApproach", candidate_predictors)]))
+prop_cca_dev <- mean(complete.cases(dat_develop[, c("Mc_FailedFemoralApproach", candidate_predictors)]))
 
 # Validation
-mean(complete.cases(dat_valid[, c("Mc_FailedFemoralApproach", candidate_predictors)]))
+prop_cca_valid <- mean(complete.cases(dat_valid[, c("Mc_FailedFemoralApproach", candidate_predictors)]))
 
 # Combined
-mean(complete.cases(dat_to_impute[, c("Mc_FailedFemoralApproach", candidate_predictors)]))
+prop_cca_comb <- mean(complete.cases(dat_to_impute[, c("Mc_FailedFemoralApproach", candidate_predictors)]))
+```
 
+Complete-case analysis (using predictors in the prediction model) results in:
+
+- `r paste0(round(prop_cca_dev * 100, 2), " %")` complete cases in the development data
+- `r paste0(round(prop_cca_valid * 100, 2), " %")` complete cases in the validation data
+- `r paste0(round(prop_cca_comb * 100, 2), " %")` complete cases in the combined data
+
+```{r miss-dat-summ}
 # Visualise missings beforehand
 naniar::gg_miss_var(dat_to_impute, facet = dataset, show_pct = TRUE)
 naniar::gg_miss_upset(dat_valid, nsets = 10)
@@ -131,8 +177,17 @@ mod_develop <- validation_dev_lambdamin$model_fit
 mod_coefs <- as.matrix(coef(mod_develop))
 colnames(mod_coefs) <- "Coefficients"
 
-# Print penalied model coefficients
-knitr::kable(data.frame(mod_coefs))
+# Print penalised model coefficients
+#knitr::kable(data.frame(mod_coefs))
+DT::datatable(
+  data.frame(round(mod_coefs, digits = 3)),
+  extensions = 'Buttons',
+  options = list(
+    dom = 'Blfrtip', 
+    buttons = c('csv', 'excel', 'pdf'),
+    lengthMenu = list(c(10, 25, 50, -1), c(10, 25, 50, "All"))
+  )
+)
 ```
 
 Bootstrap-based internal validation, optimism-corrected performance:
@@ -185,18 +240,55 @@ auc_df <- split(df_calplot_valid, ~ .imp) %>%
   }) %>%
   bind_rows(.id = ".imp") 
 
-psfmi::pool_auc(auc_df$auc, sqrt(auc_df$var_auc), nimp = max(as.numeric(auc_df$.imp)))
+auc_ext <- psfmi::pool_auc(
+  est_auc = auc_df$auc,
+  est_se = sqrt(auc_df$var_auc),
+  nimp = max(as.numeric(auc_df$.imp))
+)
 
 # Get cal slope and intercept
-split(df_calplot_valid, ~ .imp) |> 
+cal_slope_ext <- split(df_calplot_valid, ~ .imp) |> 
   map(.f = ~ glm(Mc_FailedFemoralApproach ~ lp_valid, family = binomial, data = .x)) |> 
   mice::pool() |> 
-  summary()
+  summary(conf.int = TRUE)
 
-split(df_calplot_valid, ~ .imp) |> 
+cal_int_ext <- split(df_calplot_valid, ~ .imp) |> 
   map(.f = ~ glm(Mc_FailedFemoralApproach ~ offset(lp_valid), family = binomial, data = .x)) |> 
   mice::pool() |> 
-  summary()
+  summary(conf.int = TRUE)
+
+int_ext <- with(
+  cal_int_ext, 
+  paste0(
+    round(estimate, 3), " [",
+    round(`2.5 %`, 3), ", ",
+    round(`97.5 %`, 3), "]"
+  )
+)
+
+slope_ext <- with(
+  cal_slope_ext[2, ], 
+  paste0(
+    round(estimate, 3), " [",
+    round(`2.5 %`, 3), ", ",
+    round(`97.5 %`, 3), "]"
+  )
+)
+
+auc_ext_bis <- with(
+  as.data.frame(auc_ext),
+  paste0(
+    round(`C-statistic`, 3), " [",
+    round(`95% Low`, 3), ", ",
+    round(`95% Up`, 3), "]"
+  )
+)
+
+rbind.data.frame(
+  cbind.data.frame("measure" = "auc", "value" = auc_ext_bis),
+  cbind.data.frame("measure" = "intercept", "value" = int_ext),
+  cbind.data.frame("measure" = "slope", "value" = slope_ext)
+)
 
 # Overestimation of risks
 calplot_MI(
