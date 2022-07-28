@@ -156,16 +156,20 @@ Complete-case analysis (using predictors in the prediction model) results in:
 - `r paste0(round(prop_cca_valid * 100, 2), " %")` complete cases in the validation data
 - `r paste0(round(prop_cca_comb * 100, 2), " %")` complete cases in the combined data
 
+The next plots look at the combinations of variables missings and their frequencies in the development and validation sets respectively:
+
 ```{r miss-dat-summ}
 # Visualise missings beforehand
 naniar::gg_miss_var(dat_to_impute, facet = dataset, show_pct = TRUE)
+naniar::gg_miss_upset(dat_develop, nsets = 10, )
 naniar::gg_miss_upset(dat_valid, nsets = 10)
-naniar::gg_miss_upset(dat_develop, nsets = 10)
 ```
 
 <!-- (Naniar/JointAI summaries/VIM) -->
 
 ## Internal validation development set
+
+Coefficients of the (penalized, with Ridge) prediction model built using the development data:
 
 ```{r dev-coefs}
 # Development imputation
@@ -190,7 +194,7 @@ DT::datatable(
 )
 ```
 
-Bootstrap-based internal validation, optimism-corrected performance:
+Bootstrap-based internal validation, optimism-corrected performance of this model:
 
 ```{r valid-dev}
 # Optimism corrected
@@ -201,7 +205,7 @@ validation_dev_lambdamin$validation_summary %>%
   knitr::kable()
 ```
 
-Calibration plot (apparent)
+Calibration plot, reflecting apparent performance:
 
 ```{r dev-calib}
 calplot_MI(
@@ -306,11 +310,15 @@ calplot_MI(
   theme_minimal()
 ```
 
+At external validation, the calibration plot shows that there is quite some overestimation of risks in the validation set.
+
 ## Model update: combined cohort re-estimation
 
 ### Interaction-by-cohort (unpenalized)
 
-(Ewout reference here, article)
+See [Balmaña, Stockwell, Steyerberg et al. (2006)](https://jamanetwork.com/journals/jama/article-abstract/203427). Here, we use standard (unpenalized) logistics regression to test for differences between the development and validation set in terms of multivariable model coefficients.
+
+The log odds table of coefficient, and the p-values for the interaction:
 
 ```{r interaction-by-cohort}
 imps_combined <- imps_all %>% 
@@ -342,6 +350,77 @@ summ_inter <- cbind.data.frame(
 
 DT::datatable(
   summ_inter,
+  extensions = 'Buttons',
+  options = list(
+    dom = 'Blfrtip', 
+    buttons = c('csv', 'excel', 'pdf'),
+    lengthMenu = list(c(10, 25, 50, -1), c(10, 25, 50, "All"))
+  )
+)
+```
+
+In the format of Table 4 from the article mentioned above (with odds ratios):
+
+```{r inter-steyerberg}
+# Second attempt in Ewout format 
+# 
+library(broom.helpers)
+library(broom)
+
+dev_unpen <- split(imps_combined |> 
+                     filter(dataset == "develop"), ~ .imp) |> 
+  map(.f = ~ glm(model_formula, family = binomial, data = .x)) |> 
+  mice::pool() |> 
+  #broom::tidy(exponentiate = TRUE, conf.int = TRUE) |> 
+  tidy(exponentiate = TRUE, conf.int = TRUE) |> 
+  #tidy_add_reference_rows(no_reference_row = all_categorical())
+  mutate(
+    "Development" = paste0(
+      round(estimate, 3), " [",
+      round(conf.low, 3), ", ",
+      round(conf.high, 3), "]"
+    )
+  ) |> 
+  select(term, Development)
+
+valid_unpen <- split(imps_combined |> 
+                     filter(dataset == "valid"), ~ .imp) |> 
+  map(.f = ~ glm(model_formula, family = binomial, data = .x)) |> 
+  mice::pool() |> 
+  #broom::tidy(exponentiate = TRUE, conf.int = TRUE) |> 
+  tidy(exponentiate = TRUE, conf.int = TRUE) |> 
+  #tidy_add_reference_rows(no_reference_row = all_categorical())
+  mutate(
+    "Validation" = paste0(
+      round(estimate, 3), " [",
+      round(conf.low, 3), ", ",
+      round(conf.high, 3), "]"
+    )
+  ) |> 
+  select(term, Validation)
+
+comb_unpen <- split(imps_combined, ~ .imp) |> 
+  map(.f = ~ glm(model_formula, family = binomial, data = .x)) |> 
+  mice::pool() |> 
+  #broom::tidy(exponentiate = TRUE, conf.int = TRUE) |> 
+  tidy(exponentiate = TRUE, conf.int = TRUE) |> 
+  #tidy_add_reference_rows(no_reference_row = all_categorical())
+  mutate(
+    "Combined" = paste0(
+      round(estimate, 3), " [",
+      round(conf.low, 3), ", ",
+      round(conf.high, 3), "]"
+    )
+  ) |> 
+  select(term, Combined)
+
+cbind.data.frame(
+  "Term" = dev_unpen$term, 
+  "Development \n cohort" = dev_unpen$Development, 
+  "Validation \n cohort" = valid_unpen$Validation,
+  "Combined \n cohort" = comb_unpen$Combined
+) |> 
+  DT::datatable(
   extensions = 'Buttons',
   options = list(
     dom = 'Blfrtip', 
@@ -443,3 +522,26 @@ plot(nom)
 # Get max probability in combined dataset?
 ```
 
+
+```{r nom-export, results='hide'}
+png(
+  filename = "analysis/figures/nomogram-combined.png",
+  width = 8,
+  height = 11,
+  units = "in",
+  res = 300
+)
+plot(nom)
+dev.off()
+
+# Predict max prob
+newpat <- dat_nomogram[1, ]
+newpat$ArchElongation <- "III"
+newpat$AngleFollowingBifurcation <- "Yes, angle >=90 degrees"
+newpat$InnCca_nr_90orLarger <- ">=1"
+newpat$ICAE_NASCET_Degree <- ">=99"
+newpat$M_age <- 8
+newpat
+
+predict(mod_lrm, type = "fitted", newdata = newpat)
+```
