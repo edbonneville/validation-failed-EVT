@@ -68,9 +68,14 @@ response_var <- all.vars(stats::update(model_formula, . ~ 1))
 For continuous variables:
 
 ```{r table-one-contin}
+# ?tar_mermaid()
+
 # Gives you everything for tables 1 and 2 (warnings due to variables not in validation, ignore!)
-table_one <- dat_combined %>%  
-  select(-all_of(c("sidescored", "AngleCcaIca", "ICAEAtherosclerosis", "StudySubjectID"))) %>%
+table_one <- select(.data = tar_read(develop_n887_raw), c("StudySubjectID", "M_mrs_rev")) |> 
+  bind_rows(select(.data = tar_read(valid_n1111_raw), c("StudySubjectID", "M_mrs_rev"))) |> 
+  rename("M_mrs_rev_orig" = "M_mrs_rev") |> 
+  left_join(dat_combined) %>%  
+  select(-all_of(c("sidescored", "AngleCcaIca", "ICAEAtherosclerosis", "StudySubjectID", "M_mrs_rev"))) %>%
   # Here we dichotomise purely for the table, does not affect original data
   mutate(
     ICA_nr_90orLarger_geq1 = factor(ifelse(ICA_nr_90orLarger >= 1, 1, 0)),
@@ -79,7 +84,37 @@ table_one <- dat_combined %>%
     InnCca_90orLarger_geq1 = factor(ifelse(InnCca_nr_90orLarger >= 1, 1, 0)),
     InnCca_90orLarger_geq2 = factor(ifelse(InnCca_nr_90orLarger >= 2, 1, 0)),
     ICAI_stenosis50 = factor(ifelse(ICAIAtherosclerosis == "Yes, >=50% stenosis", 1, 0)),
-    AngleAaInn_OR_AaCca_dich45 = factor(ifelse(AngleAaInn_OR_AaCca > 45, 0, 1))
+    AngleAaInn_OR_AaCca_dich45 = factor(ifelse(AngleAaInn_OR_AaCca > 45, 0, 1)),
+    Mc_pretici_short = fct_collapse(
+      Mc_pretici_short, 
+      "<1" = c("0"),
+      ">=1" = c("1", "2A", "2B, 2C or 3")
+    ),
+    M_collaterals = fct_collapse(
+      M_collaterals,
+      "<50" = c("absent collaterals", "filling <50% of occluded area"),
+      ">=50" = c(">50% but less <100%", "100% of occluded area")
+    ),
+    M_ASPECTS_BL = factor(
+      ifelse(M_ASPECTS_BL > 7, 0, 1),
+      levels = c(0, 1),
+      labels = c("8-10", "<=7")
+    ),
+    M_CBS_BL = factor(
+      ifelse(M_CBS_BL > 7, 0, 1),
+      levels = c(0, 1),
+      labels = c("8-10", "<=7")
+    ),
+    M_posttici_c = fct_collapse(
+      M_posttici_c,
+      "2B-3" = c("2B", "2C", "3"),
+      "0-2A" = c("0", "1", "2A")
+    ),
+    M_mrs_rev_orig = factor(
+      ifelse(M_mrs_rev_orig >= 4, 0, 1),
+      levels = c(0, 1),
+      labels = c("0-2", "3-6")
+    )
   ) %>% 
   CreateTableOne(data = ., strata = "dataset")
 
@@ -161,8 +196,21 @@ The next plots look at the combinations of variables missings and their frequenc
 ```{r miss-dat-summ}
 # Visualise missings beforehand
 naniar::gg_miss_var(dat_to_impute, facet = dataset, show_pct = TRUE)
-naniar::gg_miss_upset(dat_develop, nsets = 10, )
-naniar::gg_miss_upset(dat_valid, nsets = 10)
+#naniar::gg_miss_upset(dat_develop, nsets = 10, )
+#naniar::gg_miss_upset(dat_valid, nsets = 10)
+
+dat_to_impute |> 
+  group_by(dataset) |> 
+  naniar::miss_var_summary() |> 
+  mutate(across(where(is.numeric), ~ round(.x, 2L))) |> 
+  DT::datatable(
+    extensions = 'Buttons',
+    options = list(
+      dom = 'Blfrtip', 
+      buttons = c('csv', 'excel', 'pdf'),
+      lengthMenu = list(c(10, 25, 50, -1), c(10, 25, 50, "All"))
+    )
+  )  
 ```
 
 <!-- (Naniar/JointAI summaries/VIM) -->
@@ -295,7 +343,7 @@ rbind.data.frame(
 )
 
 # Overestimation of risks
-calplot_MI(
+calplot_ext <- calplot_MI(
   imps_long = imps_valid,
   model = validation_dev_lambdamin$model_fit,
   impdat_ind = ".imp",
@@ -304,10 +352,23 @@ calplot_MI(
   startpos_hist = -0.25,
   knots = 5,
   n_bins = 200,
-  xlim = c(0, 0.85),
+  xlim = c(0, 0.7),
   ylim = c(-0.25, 1)
 ) +
-  theme_minimal()
+  theme_minimal() + 
+  labs(x = "Predicted probability", y = "Observed proportion")
+
+calplot_ext
+
+ggsave(
+  calplot_ext,
+  filename = "analysis/figures/calibration-plot-ext.png",
+  width = 8,
+  height = 5,
+  units = "in",
+  dpi = 300, 
+  bg = "white"
+)
 ```
 
 At external validation, the calibration plot shows that there is quite some overestimation of risks in the validation set.
@@ -457,7 +518,7 @@ validation_comb_lambdamin$validation_summary %>%
   summarise(value = paste0(corrected, " [", lower_corrected, ";", upper_corrected, "]")) %>%
   knitr::kable()
 
-calplot_MI(
+calplot_combined <- calplot_MI(
   imps_long = imps_combined,
   model = validation_comb_lambdamin$model_fit,
   impdat_ind = ".imp",
@@ -469,7 +530,19 @@ calplot_MI(
   xlim = c(0, 0.55),
   ylim = c(-0.25, 0.8)
 ) +
-  theme_minimal()
+  theme_minimal() +
+  labs(x = "Predicted probability", y = "Observed proportion")
+
+calplot_combined
+
+ggsave(
+  calplot_combined,
+  filename = "analysis/figures/calibration-plot-combined.png",
+  width = 8,
+  height = 5,
+  units = "in",
+  dpi = 300, bg = "white"
+)
 ```
 
 ### Nomogram
@@ -492,24 +565,32 @@ dat_nomogram <- imps_combined %>%
   )
 
 # Set variable labels
-Hmisc::label(dat_nomogram$M_age) <- "Age (decades)"
+Hmisc::label(dat_nomogram$M_age) <- "Age (per decade)"
 Hmisc::label(dat_nomogram$M_prev_ht) <- "Hypertension"
-Hmisc::label(dat_nomogram$AorticVariant) <- "Aortic variant"
-Hmisc::label(dat_nomogram$ArchElongation) <- "Arch Elongation"
-Hmisc::label(dat_nomogram$AngleFollowingBifurcation) <- "Angle post-bifurcation"
-Hmisc::label(dat_nomogram$InnCca_nr_90orLarger) <- "CCA angles >=90 degr."
+Hmisc::label(dat_nomogram$ArchElongation) <- "Aortic Arch Elongation"
+Hmisc::label(dat_nomogram$AorticVariant) <- "Aortic variants"
+Hmisc::label(dat_nomogram$InnCca_nr_90orLarger) <- "Tortuosity IA and CCA"
+Hmisc::label(dat_nomogram$AngleFollowingBifurcation) <- "Tortuosity cervical ICA"
 Hmisc::label(dat_nomogram$ICAE_NASCET_Degree) <- "ICA stenosis"
 
 dd <- datadist(dat_nomogram)
 options(datadist = "dd")
 
 # Edit some labels
+model_formula_reorder <- Mc_FailedFemoralApproach ~ M_age + M_prev_ht + ArchElongation +
+  AorticVariant + InnCca_nr_90orLarger + AngleFollowingBifurcation + ICAE_NASCET_Degree
+
+# Annoying stuff to reorder
+mod_lrm_reorder <- lrm(model_formula_reorder, data = dat_nomogram)
 mod_lrm <- lrm(model_formula, data = dat_nomogram)
 mod_lrm$coefficients <- setNames(unname(drop(mod_coefs_comb)), names(mod_lrm$coefficients))
+mod_lrm_reorder$coefficients <- mod_lrm$coefficients[match(
+  names(mod_lrm_reorder$coefficients), names(mod_lrm$coefficients)
+)]
 
 par(mar = c(2,2,1,1))
 nom <- nomogram(
-  fit = mod_lrm, 
+  fit = mod_lrm_reorder, 
   fun = plogis, 
   maxscale = 10, 
   funlabel = "Predicted probability", 
@@ -517,7 +598,17 @@ nom <- nomogram(
   fun.at = c(.01, .05, seq(.1, 1, by = .1))
 )
 
+# Adjust levels
+nom$`Tortuosity cervical ICA`$AngleFollowingBifurcation <- c("<90°", ">=90°") #°
+nom$`Tortuosity IA and CCA`$InnCca_nr_90orLarger <- c("<90°", ">=90°") #°
+nom$`ICA stenosis`$ICAE_NASCET_Degree <- c("<99%", ">=99%") #°
+nom$`Aortic variants`$AorticVariant <- c("Normal", "Common origin\nIA-CCA", "Bovine arch") #°
+nom$`Aortic Arch Elongation`$ArchElongation <- c("No elongation", "Mild to moderate", "Severe") #°
+
 plot(nom)
+
+# Printing points
+print(nom, dec = 2L)
 
 # Get max probability in combined dataset?
 ```
@@ -540,8 +631,10 @@ newpat$ArchElongation <- "III"
 newpat$AngleFollowingBifurcation <- "Yes, angle >=90 degrees"
 newpat$InnCca_nr_90orLarger <- ">=1"
 newpat$ICAE_NASCET_Degree <- ">=99"
-newpat$M_age <- 8
+newpat$M_age <- 10
 newpat
 
 predict(mod_lrm, type = "fitted", newdata = newpat)
+dat_nomogram[which.max(predict(mod_lrm, type = "fitted", newdata = dat_nomogram)), ]
+predict(mod_lrm, type = "fitted", newdata = dat_nomogram) |>  max()
 ```
