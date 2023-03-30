@@ -11,6 +11,8 @@ output:
       smooth_scroll: false
 editor_options: 
   chunk_output_type: console
+params:
+  interactive_tables: FALSE
 ---
 
 ```{r setup, include=FALSE}
@@ -32,6 +34,7 @@ library(glmnet)
 library(DT)
 library(broom.helpers)
 library(broom)
+library(knitr)
 ```
 
 ```{r objs}
@@ -133,15 +136,18 @@ invisible(
 )
 
 #https://stackoverflow.com/questions/50039186/add-download-buttons-in-dtrenderdatatable
-DT::datatable(
-  tab_contin,
-  extensions = 'Buttons',
-  options = list(
-    dom = 'Blfrtip', 
-    buttons = c('csv', 'excel', 'pdf'),
-    lengthMenu = list(c(10, 25, 50, -1), c(10, 25, 50, "All"))
+if (params$interactive_tables) {
+  DT::datatable(
+    tab_contin,
+    extensions = 'Buttons',
+    options = list(
+      dom = 'Blfrtip', 
+      buttons = c('csv', 'excel', 'pdf'),
+      lengthMenu = list(c(10, 25, 50, -1), c(10, 25, 50, "All"))
+    )
   )
-)
+} else kableone(table_one$ContTable)
+
 ```
 
 For categorical variables:
@@ -158,15 +164,17 @@ invisible(
   )
 )
 
-DT::datatable(
-  tab_cat,
-  extensions = 'Buttons',
-  options = list(
-    dom = 'Blfrtip', 
-    buttons = c('csv', 'excel', 'pdf'),
-    lengthMenu = list(c(10, 25, 50, -1), c(10, 25, 50, "All"))
+if (params$interactive_tables) {
+  DT::datatable(
+    tab_cat,
+    extensions = 'Buttons',
+    options = list(
+      dom = 'Blfrtip', 
+      buttons = c('csv', 'excel', 'pdf'),
+      lengthMenu = list(c(10, 25, 50, -1), c(10, 25, 50, "All"))
+    )
   )
-)
+} else kableone(table_one$CatTable)
 ```
 
 ### Missing data summaries 
@@ -202,11 +210,14 @@ naniar::gg_miss_var(dat_to_impute, facet = dataset, show_pct = TRUE)
 #naniar::gg_miss_upset(dat_develop, nsets = 10, )
 #naniar::gg_miss_upset(dat_valid, nsets = 10)
 
-dat_to_impute |> 
+df_missings <- dat_to_impute |> 
   group_by(dataset) |> 
   naniar::miss_var_summary() |> 
-  mutate(across(where(is.numeric), ~ round(.x, 2L))) |> 
+  mutate(across(where(is.numeric), ~ round(.x, 2L))) 
+
+if (params$interactive_tables)  {
   DT::datatable(
+    df_missings,
     extensions = 'Buttons',
     options = list(
       dom = 'Blfrtip', 
@@ -214,6 +225,7 @@ dat_to_impute |>
       lengthMenu = list(c(10, 25, 50, -1), c(10, 25, 50, "All"))
     )
   )  
+} else kable(df_missings)
 ```
 
 <!-- (Naniar/JointAI summaries/VIM) -->
@@ -234,15 +246,19 @@ colnames(mod_coefs) <- "Coefficients"
 
 # Print penalised model coefficients
 #knitr::kable(data.frame(mod_coefs))
-DT::datatable(
-  data.frame(round(mod_coefs, digits = 3)),
-  extensions = 'Buttons',
-  options = list(
-    dom = 'Blfrtip', 
-    buttons = c('csv', 'excel', 'pdf'),
-    lengthMenu = list(c(10, 25, 50, -1), c(10, 25, 50, "All"))
+
+if (params$interactive_tables)  {
+
+  DT::datatable(
+    data.frame(round(mod_coefs, digits = 3)),
+    extensions = 'Buttons',
+    options = list(
+      dom = 'Blfrtip', 
+      buttons = c('csv', 'excel', 'pdf'),
+      lengthMenu = list(c(10, 25, 50, -1), c(10, 25, 50, "All"))
+    )
   )
-)
+} else kable(data.frame(round(mod_coefs, digits = 3)))
 ```
 
 Bootstrap-based internal validation, optimism-corrected performance of this model:
@@ -412,15 +428,17 @@ summ_inter <- cbind.data.frame(
   ) |> 
   mutate(across(where(is.numeric), ~ round(.x, 3)))
 
-DT::datatable(
-  summ_inter,
-  extensions = 'Buttons',
-  options = list(
-    dom = 'Blfrtip', 
-    buttons = c('csv', 'excel', 'pdf'),
-    lengthMenu = list(c(10, 25, 50, -1), c(10, 25, 50, "All"))
+if (params$interactive_tables) {
+  DT::datatable(
+    summ_inter,
+    extensions = 'Buttons',
+    options = list(
+      dom = 'Blfrtip', 
+      buttons = c('csv', 'excel', 'pdf'),
+      lengthMenu = list(c(10, 25, 50, -1), c(10, 25, 50, "All"))
+    )
   )
-)
+} else kable(summ_inter)
 ```
 
 In the format of Table 4 from the article mentioned above (with odds ratios):
@@ -474,20 +492,24 @@ comb_unpen <- split(imps_combined, ~ .imp) |>
   ) |> 
   select(term, Combined)
 
-cbind.data.frame(
+df_unpen <- cbind.data.frame(
   "Term" = dev_unpen$term, 
-  "Development \n cohort" = dev_unpen$Development, 
-  "Validation \n cohort" = valid_unpen$Validation,
-  "Combined \n cohort" = comb_unpen$Combined
-) |> 
+  "Development cohort" = dev_unpen$Development, 
+  "Validation cohort" = valid_unpen$Validation,
+  "Combined cohort" = comb_unpen$Combined
+) 
+
+if (params$interactive_tables) {
   DT::datatable(
-  extensions = 'Buttons',
-  options = list(
-    dom = 'Blfrtip', 
-    buttons = c('csv', 'excel', 'pdf'),
-    lengthMenu = list(c(10, 25, 50, -1), c(10, 25, 50, "All"))
+    df_unpen,
+    extensions = 'Buttons',
+    options = list(
+      dom = 'Blfrtip', 
+      buttons = c('csv', 'excel', 'pdf'),
+      lengthMenu = list(c(10, 25, 50, -1), c(10, 25, 50, "All"))
+    )
   )
-)
+} else kable(df_unpen)
 ```
 
 ### Internal validation combined cohort
@@ -500,15 +522,19 @@ mod_coefs_comb <- as.matrix(coef(mod_combined))
 colnames(mod_coefs_comb) <- "Coefficients"
 
 # Print penalised model coefficients
-DT::datatable(
-  data.frame(round(mod_coefs_comb, digits = 3)),
-  extensions = 'Buttons',
-  options = list(
-    dom = 'Blfrtip', 
-    buttons = c('csv', 'excel', 'pdf'),
-    lengthMenu = list(c(10, 25, 50, -1), c(10, 25, 50, "All"))
+if (params$interactive_tables) {
+  DT::datatable(
+    data.frame(round(mod_coefs_comb, digits = 3)),
+    extensions = 'Buttons',
+    options = list(
+      dom = 'Blfrtip', 
+      buttons = c('csv', 'excel', 'pdf'),
+      lengthMenu = list(c(10, 25, 50, -1), c(10, 25, 50, "All"))
+    )
   )
-)
+} else kable(data.frame(round(mod_coefs_comb, digits = 3)))
+
+
 
 # Optimism corrected
 validation_comb_lambdamin$validation_summary %>% 
@@ -563,6 +589,9 @@ dat_nomogram <- imps_combined %>%
     )
   )
 
+dd <<- datadist(dat_nomogram)
+options(datadist = "dd")
+
 # Set variable labels
 Hmisc::label(dat_nomogram$M_age) <- "Age (per decade)"
 Hmisc::label(dat_nomogram$M_prev_ht) <- "Hypertension"
@@ -571,9 +600,6 @@ Hmisc::label(dat_nomogram$AorticVariant) <- "Aortic variants"
 Hmisc::label(dat_nomogram$InnCca_nr_90orLarger) <- "Tortuosity IA and CCA"
 Hmisc::label(dat_nomogram$AngleFollowingBifurcation) <- "Tortuosity cervical ICA"
 Hmisc::label(dat_nomogram$ICAE_NASCET_Degree) <- "ICA stenosis"
-
-dd <- datadist(dat_nomogram)
-options(datadist = "dd")
 
 # Edit some labels
 model_formula_reorder <- Mc_FailedFemoralApproach ~ M_age + M_prev_ht + ArchElongation +

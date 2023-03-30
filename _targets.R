@@ -42,8 +42,8 @@ source("data-raw/prepare_raw_data.R")
 source("R/imputation-helpers.R")
 source("R/model-validation-helpers.R")
 
-# Pipeline (parts are in separate files):
-targets_list <- list(
+# Pipeline 
+list(
 
   # -- Part 1: Data preparation
   tar_target(
@@ -133,16 +133,8 @@ targets_list <- list(
       lambda_choice = "min",
       B = validation_settings$B
     )
-  )
+  ),
+  tarchetypes::tar_render(analysis_summary, path = "analysis/article-results.Rmd")
   # 
   #tarchetypes::tar_render(analysis_summary, path = "analysis/2020-09_analysis-summary.Rmd")
 )
-
-# Source targets
-#("R/NMA-preDLI-models.R")
-#source("R/NMA-postDLI-models.R")
-
-#targets_list <- c(targets_list, bind_imps)
-targets_list
-
-    
