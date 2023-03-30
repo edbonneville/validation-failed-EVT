@@ -4,6 +4,7 @@ author: "E. F. Bonneville"
 date: "`r Sys.setenv(LANG = 'en_US.UTF-8'); format(Sys.Date(), '%d %B %Y')`"
 output: 
   html_document:
+    keep_md: true
     df_print: kable
     toc: yes
     toc_float: 
@@ -21,7 +22,7 @@ knitr::opts_chunk$set(
   message = FALSE
 )
 
-# Load libraries for knitting
+# Load libraries just for analysis rmd
 library(ggplot2)
 library(targets)
 library(tidyverse)
@@ -29,6 +30,8 @@ library(tableone)
 library(rms)
 library(glmnet)
 library(DT)
+library(broom.helpers)
+library(broom)
 ```
 
 ```{r objs}
@@ -424,10 +427,6 @@ In the format of Table 4 from the article mentioned above (with odds ratios):
 
 ```{r inter-steyerberg}
 # Second attempt in Ewout format 
-# 
-library(broom.helpers)
-library(broom)
-
 dev_unpen <- split(imps_combined |> 
                      filter(dataset == "develop"), ~ .imp) |> 
   map(.f = ~ glm(model_formula, family = binomial, data = .x)) |> 
