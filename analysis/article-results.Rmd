@@ -23,7 +23,7 @@ knitr::opts_chunk$set(
   out.width = "70%", 
   warning = FALSE, 
   message = FALSE,
-  fig.retina = 2L
+  fig.retina = 3L
 )
 
 # Load libraries just for analysis rmd
@@ -290,10 +290,11 @@ calplot_MI(
   xlim = c(0, 0.85),
   ylim = c(-0.25, 1)
 ) +
-  theme_minimal()
+  theme_minimal() + 
+  labs(x = "Predicted probability", y = "Observed proportion")
 ```
 
-## External validation
+## Temporal validation
 
 ```{r ext-validation}
 imps_valid <- imps_all %>% 
@@ -380,16 +381,6 @@ calplot_ext <- calplot_MI(
   labs(x = "Predicted probability", y = "Observed proportion")
 
 calplot_ext
-
-ggsave(
-  calplot_ext,
-  filename = "analysis/figures/calibration-plot-ext.png",
-  width = 8,
-  height = 5,
-  units = "in",
-  dpi = 300, 
-  bg = "white"
-)
 ```
 
 At external validation, the calibration plot shows that there is quite some overestimation of risks in the validation set.
@@ -564,7 +555,7 @@ calplot_combined
 
 ggsave(
   calplot_combined,
-  filename = "analysis/figures/calibration-plot-combined.png",
+  filename = "analysis/manuscript-figures/calibration-plot-combined.png",
   width = 8,
   height = 5,
   units = "in",
@@ -643,7 +634,7 @@ print(nom, dec = 2L)
 
 ```{r nom-export, results='hide'}
 png(
-  filename = "analysis/figures/nomogram-combined.png",
+  filename = "analysis/manuscript-figures/nomogram-combined.png",
   width = 8,
   height = 11,
   units = "in",

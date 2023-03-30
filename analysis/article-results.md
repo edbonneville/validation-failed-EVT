@@ -204,7 +204,7 @@ Calibration plot, reflecting apparent performance:
 
 <img src="article-results_files/figure-html/dev-calib-1.png" width="70%" />
 
-## External validation
+## Temporal validation
 
 <div class="kable-table">
 
