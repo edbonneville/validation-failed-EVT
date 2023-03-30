@@ -17,11 +17,13 @@ params:
 
 ```{r setup, include=FALSE}
 knitr::opts_knit$set(root.dir = here::here())
+
 knitr::opts_chunk$set(
   echo = FALSE, 
-  out.width = "100%", 
+  out.width = "70%", 
   warning = FALSE, 
-  message = FALSE
+  message = FALSE,
+  fig.retina = 2L
 )
 
 # Load libraries just for analysis rmd

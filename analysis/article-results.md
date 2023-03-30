@@ -110,7 +110,7 @@ Complete-case analysis (using predictors in the prediction model) results in:
 
 The next plots look at the combinations of variables missings and their frequencies in the development and validation sets respectively:
 
-<img src="article-results_files/figure-html/miss-dat-summ-1.png" width="100%" />
+<img src="article-results_files/figure-html/miss-dat-summ-1.png" width="70%" />
 
 |dataset |variable                  | n_miss| pct_miss|
 |:-------|:-------------------------|------:|--------:|
@@ -202,7 +202,7 @@ Bootstrap-based internal validation, optimism-corrected performance of this mode
 
 Calibration plot, reflecting apparent performance:
 
-<img src="article-results_files/figure-html/dev-calib-1.png" width="100%" />
+<img src="article-results_files/figure-html/dev-calib-1.png" width="70%" />
 
 ## External validation
 
@@ -214,7 +214,7 @@ Calibration plot, reflecting apparent performance:
 |intercept |-0.106 [-0.348, 0.136] |
 |slope     |0.583 [0.383, 0.783]   |
 
-</div><img src="article-results_files/figure-html/ext-validation-1.png" width="100%" />
+</div><img src="article-results_files/figure-html/ext-validation-1.png" width="70%" />
 
 At external validation, the calibration plot shows that there is quite some overestimation of risks in the validation set.
 
@@ -280,11 +280,11 @@ In the format of Table 4 from the article mentioned above (with odds ratios):
 |intercept |0.014 [-0.146;0.203] |
 |slope     |1.02 [0.857;1.256]   |
 
-<img src="article-results_files/figure-html/combined-validation-1.png" width="100%" />
+<img src="article-results_files/figure-html/combined-validation-1.png" width="70%" />
 
 ### Nomogram
 
-<img src="article-results_files/figure-html/nomogram-1.png" width="100%" />
+<img src="article-results_files/figure-html/nomogram-1.png" width="70%" />
 
 ```
 ## Points per unit of linear predictor: NaN 
