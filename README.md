@@ -1,6 +1,6 @@
 # Development and validation of a prediction model for failure of transfemoral approach of endovascular treatment for large vessel occlusion acute ischemic stroke
 
-Authors: Ghislaine Holswilder, Edouard F. Bonneville, Julia van Hees, Stijn Kremer, Hine van Os, Nyika D. Kruyt, Marieke J.H. Wermer, Marianne A.A. van Walderveen, on behalf of the MR CLEAN Registry investigators
+Authors: Ghislaine Holswilder, MSc, Edouard F. Bonneville, MSc, Julia van Hees, BSc, Stijn W.F. Kremer, MD, Hendrikus J. A. van Os, MD. PhD, Aad van der Lugt, MD. PhD, Wouter J. Schonewille, MD. PhD, Geert J. Lycklama à Nijeholt, MD. PhD, Charles B.L.M. Majoie, MD. PhD, Bart J Emmer, M.D. PhD, Nyika D. Kruyt, MD. PhD, Marieke J.H. Wermer, MD. PhD, Marianne A.A. van Walderveen, MD. PhD, on behalf of the MR CLEAN Registry investigators.
 
 ## Abstract
 
