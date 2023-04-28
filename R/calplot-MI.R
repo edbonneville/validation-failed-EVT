@@ -30,10 +30,9 @@ calplot_MI <- function(imps_long,
   scaled_wts <- imps_long$wts / sum(imps_long$wts)
   
   # https://stats.stackexchange.com/questions/220156/how-to-combine-pool-binomial-confidence-intervals-after-multiple-imputation 
-  #https://github.com/mwheymans/miceafter/blob/main/R/pool_prop_wilson.R
-  
+  # https://github.com/mwheymans/miceafter/blob/main/R/pool_prop_wilson.R
   # (Also see https://en.wikipedia.org/wiki/Binomial_proportion_confidence_interval#Standard_error_of_a_proportion_estimation_when_using_weighted_data)
-  # This is wrong!!
+  # If we want CIs in the plot this will need to be fixed, unsure how to do with weights
   risk_pts <- cbind.data.frame(
     "predicted" = tapply(pred_probs, risk_groups, function(x) mean(x, na.rm = TRUE)),
     "observed" = tapply(as.numeric(y) - 1L, risk_groups, function(x) mean(x, na.rm = TRUE)),

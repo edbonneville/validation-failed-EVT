@@ -1,3 +1,5 @@
+#' Assigns rows to particular cross-validation folds
+#' 
 assign_crossval_folds <- function(y, n_folds) {
   n <- length(y)
   inds <- sample(x = rep(seq_len(n_folds), ceiling(n / n_folds)), size = n)
@@ -5,7 +7,8 @@ assign_crossval_folds <- function(y, n_folds) {
   return(mat)
 }
 
-# Returns list of bootstrap datasets
+#' Returns list of bootstrapped datasets, using block resampling
+#' 
 group_resample <- function(dat, 
                            id_var, 
                            B = 50, 
@@ -30,51 +33,10 @@ group_resample <- function(dat,
 
 # (Above is not very efficient)
 
-imps_univariate_ORs <- function(outcome,
-                                predictors,
-                                imps,
-                                keep_intercepts = FALSE) {
-  
-  # Check if from mice() or not
-  #imp_dats <- mice::complete(imps, action = "all")
-  
-  imp_dats <- imps
-  
-  # Run ORs - maybe later exclude intercept
-  univariate_analyses <- purrr::map_dfr(.x = predictors, .f = ~ {
-    
-    form_univar <- stats::reformulate(response = outcome, termlabels = .x) 
-    
-    # Start pooling
-    mods_imp_dats <- lapply(
-      X = imp_dats, 
-      FUN = function(imp) {
-        # Check first if predictor not totally missing (and not an interaction)
-        if (all(is.na(imp[[.x]])) & !grepl(x = .x, pattern = "\\*")) 
-          form_univar <- update(form_univar, . ~ 1)
-        glm(form_univar, family = binomial(link = "logit"), data = imp)
-      } 
-    )  
-    
-    summary(mice::pool(mods_imp_dats), conf.int = 0.95, exponentiate = TRUE)
-  })
-  
-  # Remove intercepts for ease of reading
-  if (!keep_intercepts) {
-    univariate_analyses <- univariate_analyses[univariate_analyses[["term"]] != "(Intercept)", ]
-  }
-  
-  return(univariate_analyses)
-}
-
-
 
 # LASSO -------------------------------------------------------------------
 
 
-
-
-# Add alpha = 1 to args..
 run_stacked_glmnet <- function(x,
                                y,
                                foldid = NULL,
@@ -126,7 +88,7 @@ calibration_intercept_slope <- function(y, lp) {
   return(result)
 }
 
-## We can keep this is as is since point estimates will be unbiased.. do pooling at external validation.
+# We can keep this is as is since point estimates will be unbiased.. do pooling at external validation.
 assess_performance <- function(glmnet_model, # Already with a picked lambda
                                new_x,
                                new_y) {

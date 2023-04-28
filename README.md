@@ -22,10 +22,9 @@ Given the data, reproduce the analysis using
 
 ``` r
 targets::tar_make()
+
+# Or to use parallel computation:
+#targets::tar_make_future(workers = future::availableCores())
 ```
 
-or otherwise use parallel computation with
-
-``` r
-targets::tar_make_future(workers = future::availableCores())
-```
+which produces the [article-results.md](./analysis/article-results.md) file with the results and figures used in the manuscript. Furthermore, the project uses [`{renv}`](https://rstudio.github.io/renv/articles/renv.html) to track its R package dependencies.
