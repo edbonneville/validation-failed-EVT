@@ -28,7 +28,7 @@ group_resample <- function(dat,
   return(boot_dats)
 }
 
-# Above is not efficient
+# (Above is not very efficient)
 
 imps_univariate_ORs <- function(outcome,
                                 predictors,

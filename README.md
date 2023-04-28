@@ -14,6 +14,8 @@
 
 ## Usage
 
+The analyses for this article are structured using the [`{targets}`](https://github.com/ropensci/targets) R package. Code for the individual targets are in the [_targets.R](./_targets.R) file.
+
 ![](analysis/targets-pipeline.png)
 
 Given the data, reproduce the analysis using

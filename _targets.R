@@ -1,8 +1,5 @@
 # Global pipeline set-up --------------------------------------------------
 
-# See following for setting up final pipline:
-# https://github.com/epiforecasts/evaluate-delta-for-forecasting/blob/4d8449fbedba71690ac6f1320a8438bdc10a4f44/_targets.R
-# - Also use capsule for renv
 
 # Workhorse packages
 library("targets")
@@ -10,7 +7,7 @@ library("tarchetypes")
 library("future")
 library("future.callr")
 
-# All packages used by the projects - this is not good for renv (add instead to _packages.R files)
+# All packages used by the projects 
 project_pkgs <- c(
   "rms", # Validation and logistic regression modelling
   "foreign", # Reading-in data, editing labels
@@ -24,17 +21,16 @@ project_pkgs <- c(
 )
 
 tar_option_set(packages = project_pkgs, error = "continue")
-# Uncomment if running scripts interactively:
-# sapply(project_pkgs, function(pkg) require(pkg, character.only = TRUE)); rm(project_pkgs)
 
 # See https://github.com/ropensci/targets/discussions/359
-#plan(list(tweak(callr, workers = 1), tweak(callr, workers = 3)))
+# Try: plan(list(tweak(callr, workers = 1), tweak(callr, workers = 3))) ?
 plan(callr)
+
 
 # Analysis pipeline -------------------------------------------------------
 
 
-# Verify whether this works here.. other inside funs 
+# Set contrasts globally
 options(contrasts = rep("contr.treatment", 2))
 
 # Source support functions
@@ -64,7 +60,7 @@ list(
   ),
   tar_target(dat_combined, prepare_raw_data(develop_n887_raw, valid_n1111_raw)),
   
-  # -- Part 2: imputations
+  # -- Part 2: Imputations
   
   # We pick the number of imputations and specify our candidate predictors
   # such that we can directly add the weights for the stacked ridge
@@ -87,22 +83,13 @@ list(
   ),
   
   # All rounds of imputations here:
-  tar_target(imps_dev, run_imputations(dat_to_impute, imp_settings, type = "develop")),
-  tar_target(imps_valid, run_imputations(dat_to_impute, imp_settings, type = "valid")),
   tar_target(imps_assess, run_imputations(dat_to_impute, imp_settings, type = "model")),
   tar_target(imps_combined, run_imputations(dat_to_impute, imp_settings, type = "combined")),
   
   # Combine all imputed datasets in one big df
   tar_target(
     imps_all,
-    bind_imps(
-      list(
-        "imps_dev" = imps_dev,
-        "imps_valid" = imps_valid,
-        "imps_assess" = imps_assess,
-        "imps_combined" = imps_combined
-      )
-    ),
+    bind_imps(list("imps_assess" = imps_assess, "imps_combined" = imps_combined)),
     format = "fst"
   ),
 
@@ -111,7 +98,7 @@ list(
     model_formula,
     reformulate(termlabels = candidate_predictors, response = "Mc_FailedFemoralApproach")
   ),
-  # # Internal validation development set
+  # Internal validation development set
   tar_target(
     validation_dev_lambdamin,
     validate_stackedImps(
@@ -119,7 +106,7 @@ list(
       formula = model_formula,
       wts = "wts",
       n_folds = validation_settings$n_folds,
-      lambda_choice = "min", #"1se" crazy results with 1se, skip
+      lambda_choice = "min", # "1se" results too extreme, avoid
       B = validation_settings$B
     )
   ),
@@ -135,6 +122,4 @@ list(
     )
   ),
   tarchetypes::tar_render(analysis_summary, path = "analysis/article-results.Rmd")
-  # 
-  #tarchetypes::tar_render(analysis_summary, path = "analysis/2020-09_analysis-summary.Rmd")
 )

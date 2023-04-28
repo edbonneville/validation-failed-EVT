@@ -35,17 +35,14 @@ add_stacked_weights <- function(dat_combined,
 
 #' Worker function for multiple imputation
 #' 
-#' Four rounds of imputation are performed:
-#' - Once for development set alone (for univariable analyses)
-#' - Once for validation set alone (for univariable analyses)
+#' Two rounds of imputation are performed:
 #' - Once as part of model validation, imputing both development and 
 #' validation data using imputation models fitted only on development set. This
 #' procedure is described in Hoogland et al. (2020)
 #' - Once on combined cohort
-#' 
 run_imputations <- function(dat_to_impute,
                             imputation_settings,
-                            type = c("develop", "valid", "model", "combined")) {
+                            type = c("model", "combined")) {
   
   # For ordered covariates to be safe (not sure if Targets passes this on)
   options(contrasts = rep("contr.treatment", 2))
@@ -61,47 +58,19 @@ run_imputations <- function(dat_to_impute,
   # Easiest to do are imputation for separate develop, valid and combine
   if (type != "model") {
     
-    imps <- switch(
-      type,
-      develop = {
-        mice::mice(
-          data = dat_develop,
-          m = imputation_settings$m,
-          method = set_mice_methods(dat_develop),
-          predictorMatrix = create_mice_predmatrix(dat = dat_develop, exclude_imp_models = "wts"),
-          maxit = imputation_settings$n_cycles,
-          printFlag = FALSE
-        )
-      },
-      valid = {
-        mice::mice(
-          data = dat_valid,
-          m = imputation_settings$m,
-          method = set_mice_methods(dat_valid, skip_impute = c(vascular_vars_develop)),
-          predictorMatrix = create_mice_predmatrix(
-            dat = dat_valid, 
-            exclude_imp_models = c("wts", vascular_vars_develop)
-          ),
-          maxit = imputation_settings$n_cycles,
-          printFlag = FALSE
-        )
-      },
-      combined = {
-        combined_to_impute <- dat_to_impute %>% select(-all_of(vascular_vars_develop))
-        mice::mice(
-          data = combined_to_impute,
-          m = imputation_settings$m,
-          predictorMatrix = create_mice_predmatrix(
-            dat = combined_to_impute, 
-            exclude_imp_models = c("wts", "dataset")
-          ),
-          method = set_mice_methods(dat = combined_to_impute),
-          printFlag = FALSE,
-          maxit = imputation_settings$n_cycles
-        )
-      }
+    combined_to_impute <- dat_to_impute %>% select(-all_of(vascular_vars_develop))
+    imps <- mice::mice(
+      data = combined_to_impute,
+      m = imputation_settings$m,
+      predictorMatrix = create_mice_predmatrix(
+        dat = combined_to_impute, 
+        exclude_imp_models = c("wts", "dataset")
+      ),
+      method = set_mice_methods(dat = combined_to_impute),
+      printFlag = FALSE,
+      maxit = imputation_settings$n_cycles
     )
-    
+  
     # This is the external validation part
   } else { 
     
