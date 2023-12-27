@@ -385,6 +385,59 @@ calplot_ext
 
 At external validation, the calibration plot shows that there is quite some overestimation of risks in the validation set.
 
+## Model update: logistic recalibration
+
+```{r log-recal}
+# https://darrendahly.github.io/post/homr/
+mod_unpen <- glm(
+  model_formula,
+  family = binomial, 
+  data = imps_develop
+)
+
+df_calplot_valid$lp_unpen <- predict(mod_unpen, newdata = df_calplot_valid,
+                                     type = "link")
+
+mod_recal <- glm(
+  #Mc_FailedFemoralApproach ~ lp_unpen,
+  #Mc_FailedFemoralApproach ~ 0 + offset(lp_valid), # same model
+  #Mc_FailedFemoralApproach ~ 1 + offset(lp_valid), # Recal in the large
+  #Mc_FailedFemoralApproach ~ lp_valid, # Logistic recal
+  family = binomial, 
+  data = df_calplot_valid
+)
+
+lp_recal <- predict(mod_recal,type = "link")
+df_calplot_valid$lp_recal <- lp_recal
+probs_recal <- plogis(lp_recal)
+probs_grid <- seq(min(probs_recal), max(probs_recal), by = 0.005)
+lp_grid <- qlogis(probs_grid)
+
+calib_mod <- glm(
+  Mc_FailedFemoralApproach ~ splines::ns(lp_recal, 5), 
+  family = binomial, 
+  data = df_calplot_valid, 
+  weights = df_calplot_valid$wts
+)
+
+stacked_df <- data.frame(
+    "predicted" = probs_grid,
+    "observed" = predict(calib_mod, newdata = data.frame("lp_recal" = lp_grid), type = "response")
+)
+
+ggplot() +
+  geom_line(
+      data = stacked_df,
+      aes(x = predicted, y = observed),
+      size = 2
+    ) +
+  geom_abline(
+      intercept = 0,
+      slope = 1, col = "red", size = 1, linetype = "dashed"
+    ) +
+  coord_cartesian(xlim = c(0, 1), ylim = c(0, 1))
+```
+
 ## Model update: combined cohort re-estimation
 
 ### Interaction-by-cohort (unpenalized)
